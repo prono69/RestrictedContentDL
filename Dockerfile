@@ -1,38 +1,39 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-    git build-essential linux-headers-amd64 tzdata && \
-    rm -rf /var/lib/apt/lists/*
-    
-# Create user with UID 1000 (Hugging Face requirement)
-RUN useradd -m -u 1000 user
- 
-# Set environment variables for the non-root user
-ENV HOME=/home/user \
+# Set timezone early to avoid repetition
+ENV TZ=Asia/Kolkata \
+    HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
 
-WORKDIR $HOME/app 
-RUN mkdir -p $HOME/.cache
-
-# Adjust ownership/permissions for the app directory (and /usr if needed)
-RUN chown -R 1000:0 $HOME/app $HOME/.cache /usr && \
+# Create user and set up environment in one layer
+RUN useradd -m -u 1000 user && \
+    mkdir -p $HOME/app $HOME/.cache && \
+    # Install system dependencies
+    apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        git build-essential linux-headers-amd64 tzdata && \
+    # Set timezone
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    # Clean up
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Set permissions
+    chown -R 1000:0 $HOME/app $HOME/.cache /usr && \
     chmod -R 777 $HOME/app /usr $HOME/.cache
-    
-# Set timezone (use Asia/Kolkata if needed)
-ENV TZ=Asia/Kolkata
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-RUN pip install --no-cache-dir -U pip wheel==0.45.1
+WORKDIR $HOME/app
 
-COPY requirements.txt $HOME/app
-RUN pip install -U -r requirements.txt
+# Install Python dependencies in one layer
+COPY requirements.txt .
+RUN pip install --no-cache-dir -U pip wheel==0.45.1 && \
+    pip install --no-cache-dir -r requirements.txt
 
-COPY . $HOME/app
-
-# Adjust ownership/permissions for the app directory (and /usr if needed)
-RUN chown -R 1000:0 $HOME/app $HOME/.cache /usr && \
-    chmod -R 777 $HOME/app /usr $HOME/.cache
+# Copy application files and set permissions in one layer
+COPY . .
+RUN chown -R 1000:0 $HOME/app && \
+    chmod -R 777 $HOME/app
 
 EXPOSE 7860
 
