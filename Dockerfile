@@ -11,7 +11,8 @@ RUN useradd -m -u 1000 user
 # Set environment variables for the non-root user
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
- 
+
+WORKDIR $HOME/app 
 RUN mkdir -p $HOME/.cache
 
 # Adjust ownership/permissions for the app directory (and /usr if needed)
@@ -24,7 +25,6 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 RUN pip install --no-cache-dir -U pip wheel==0.45.1
 
-WORKDIR $HOME/app
 COPY requirements.txt $HOME/app
 RUN pip install -U -r requirements.txt
 
