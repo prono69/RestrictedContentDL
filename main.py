@@ -2,10 +2,15 @@
 # Channel: https://t.me/itsSmartDev
 
 import os
+import io
+from io import BytesIO
 import shutil
 import psutil
+import sys
+import traceback
 import asyncio
 from time import time
+from pprint import pformat  # For pretty-printing
 
 from pyleaves import Leaves
 from pyrogram.enums import ParseMode
@@ -22,6 +27,7 @@ from helpers.utils import (
     send_media,
     get_readable_file_size,
     get_readable_time,
+    json_parser,
 )
 
 from config import PyroConf
@@ -41,6 +47,17 @@ bot = Client(
 user = Client("user_session", workers=1000, session_string=PyroConf.SESSION_STRING)
 
 RUNNING_TASKS = set()
+
+MAX_MESSAGE_LENGTH = 4096
+EVAL_TIMEOUT = 60  # Timeout in seconds
+eval_history = []
+
+COMMAND_TIMEOUT = 60  # Timeout in seconds
+COMMAND_ALIASES = {
+    "update": "git pull",
+    "restart": "systemctl restart mybot.service",
+}
+command_history = []
 
 def track_task(coro):
     task = asyncio.create_task(coro)
@@ -343,7 +360,223 @@ async def cancel_all_tasks(_, message: Message):
             task.cancel()
             cancelled += 1
     await message.reply(f"**Cancelled {cancelled} running task(s).**")
+    
+    
+@bot.on_message(filters.command("eval") & filters.user(PyroConf.OWNER_ID))
+async def eval_command(client, message):
+    status_message = await message.reply_text("`Processing ...`")
+    cmd = message.text.split(" ", maxsplit=1)[1]
 
+    reply_to_ = message
+    if message.reply_to_message:
+        reply_to_ = message.reply_to_message
+
+    old_stderr = sys.stderr
+    old_stdout = sys.stdout
+    redirected_output = sys.stdout = io.StringIO()
+    redirected_error = sys.stderr = io.StringIO()
+    stdout, stderr, exc, result = None, None, None, None
+
+    try:
+        # Run the user-provided code and capture the result of the last expression
+        result = await aexec(cmd, client, message)
+    except Exception as e:
+        exc = traceback.format_exc()
+        error_type = e.__class__.__name__
+        error_message = str(e)
+        evaluation = (
+            f"❌ **Error**: `{error_type}`\n"
+            f"**Message**: `{error_message}`\n"
+            f"**Traceback**:\n<code>{exc}</code>"
+        )
+    else:
+        stdout = redirected_output.getvalue()
+        stderr = redirected_error.getvalue()
+        formatted_result = json_parser(result, indent=2)
+        if stderr:
+            evaluation = f"⚠️ **Stderr**:\n<code>{stderr}</code>"
+        elif stdout:
+            evaluation = f"<code>{stdout}</code>"
+        elif result is not None:  # If the last expression returned something
+            evaluation = f"<code>{formatted_result}</code>"
+        else:
+            evaluation = "✅ **Success**"
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+    final_output = "<b>EVAL</b>: "
+    final_output += f"<code>{cmd}</code>\n\n"
+    final_output += "<b>OUTPUT</b>:\n"
+    final_output += f"{evaluation.strip()} \n"
+
+    # Maintain a history of eval commands (max 25 entries)
+    eval_history.append(cmd)
+    if len(eval_history) > 25:
+        eval_history.pop(0)
+
+    if len(final_output) > MAX_MESSAGE_LENGTH:
+        with io.BytesIO(str.encode(final_output)) as out_file:
+            out_file.name = "eval.txt"
+            await reply_to_.reply_document(
+                document=out_file,
+                caption=cmd[: MAX_MESSAGE_LENGTH // 4 - 1],
+                disable_notification=True,
+                quote=True,
+            )
+            os.remove("eval.txt")
+    else:
+        await reply_to_.reply_text(final_output, quote=True)
+    await status_message.delete()
+
+
+async def aexec(code, client, message):
+    indent = "    "  # 4 spaces for consistent indentation
+    
+    header = (
+        "async def __aexec(client, message):\n"
+        f"{indent}import os\n"
+        f"{indent}import wget\n"
+        f"{indent}import requests\n"
+        f"{indent}from pprint import pformat\n"
+        f"{indent}neo = message\n"
+        f"{indent}e = message = event = neo\n"
+        f"{indent}r = reply = message.reply_to_message\n"
+        f"{indent}chat = message.chat.id\n"
+        f"{indent}c = client\n"
+        f"{indent}to_photo = message.reply_photo\n"
+        f"{indent}to_video = message.reply_video\n"
+        f"{indent}p = print\n"
+        f"{indent}_result = None\n"
+    )
+    
+    lines = code.split("\n")
+    try:
+        # Try to compile the last line as an expression.
+        compile(lines[-1], "<string>", "eval")
+        # Indent all lines except the last.
+        body = "\n".join(indent + l for l in lines[:-1])
+        # Append the last line to capture its return value.
+        last_line = "\n" + indent + "_result = " + lines[-1]
+    except SyntaxError:
+        body = "\n".join(indent + l for l in lines)
+        last_line = ""
+    
+    # Add a final return statement to return the captured result.
+    return_line = "\n" + indent + "return _result\n"
+    full_code = header + body + last_line + return_line
+    
+    # Dynamically compile and execute the function definition.
+    exec(full_code)
+    result = await locals()["__aexec"](client, message)
+    return result
+
+
+
+# Add a command to view history
+@bot.on_message(filters.command("ehis") & filters.user(PyroConf.OWNER_ID))
+async def show_eval_history(_, message):
+    # Add numbering to each command and wrap in <code> tags
+    formatted_history = "\n".join(f"<b>{i + 1}.</b> <code>{cmd}</code>" for i, cmd in enumerate(reversed(eval_history)))
+
+    # Check if the message exceeds Telegram's character limit
+    if len(formatted_history) > MAX_MESSAGE_LENGTH:
+        # Send as a text file
+        with io.BytesIO(str.encode(formatted_history)) as out_file:
+            out_file.name = "eval_history.txt"
+            await message.reply_document(
+                document=out_file,
+                caption="__Limit exceeded, so sending as file__",
+                quote=True,
+            )
+            os.remove("eval_history.txt")
+    else:
+        # Send as a regular message
+        await message.reply_text(f"<b>EVAL HISTORY:</b>\n{formatted_history}", quote=True)
+    
+
+@bot.on_message(filters.command("bash") & filters.user(PyroConf.OWNER_ID))
+async def execution(_, message):
+    status_message = await message.reply_text("`Processing ...`")
+    cmd = message.text.split(" ", maxsplit=1)[1]
+
+    # Replace command with alias if it exists
+    cmd = COMMAND_ALIASES.get(cmd, cmd)
+
+    reply_to_ = message
+    if message.reply_to_message:
+        reply_to_ = message.reply_to_message
+
+    try:
+        # Log the command
+        logging.info(f"Command executed by {message.from_user.id}: {cmd}")
+
+        # Run the command with a timeout
+        process = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=COMMAND_TIMEOUT)
+        except asyncio.TimeoutError:
+            await process.kill()  # Kill the process if it times out
+            await status_message.edit_text("❌ **Timeout**: The command took too long to execute.")
+            return
+
+        e = stderr.decode().strip() if stderr else "😂"
+        o = stdout.decode().strip() if stdout else "😐"
+
+        OUTPUT = ""
+        OUTPUT += f"<b>QUERY:</b>\n<u>Command:</u>\n<code>{cmd}</code> \n"
+        OUTPUT += f"<u>PID</u>: <code>{process.pid}</code>\n\n"
+        OUTPUT += f"<b>stderr</b>: \n<code>{e}</code>\n\n"
+        OUTPUT += f"<b>stdout</b>: \n<code>{o}</code>"
+
+        if len(OUTPUT) > MAX_MESSAGE_LENGTH:
+            with BytesIO(str.encode(OUTPUT)) as out_file:
+                out_file.name = "exec.txt"
+                await reply_to_.reply_document(
+                    document=out_file,
+                    caption=cmd[: MAX_MESSAGE_LENGTH // 4 - 1],
+                    disable_notification=True,
+                    quote=True,
+                )
+                os.remove("exec.txt")
+        else:
+            await reply_to_.reply_text(OUTPUT, quote=True)
+
+        # Add command to history
+        command_history.append(cmd)
+        if len(command_history) > 25:  # Keep only the last 10 commands
+            command_history.pop(0)
+
+    except Exception as ex:
+        await reply_to_.reply_text(f"❌ **Error**: {str(ex)}", quote=True)
+    finally:
+        await status_message.delete()
+        
+        
+
+@bot.on_message(filters.command("bhis") & filters.user(PyroConf.OWNER_ID))
+async def show_history(_, message):
+    # Add numbering to each command and wrap in <code> tags
+    formatted_history = "\n".join(f"<b>{i + 1}.</b> <code>{cmd}</code>" for i, cmd in enumerate(reversed(command_history)))
+
+    # Check if the message exceeds Telegram's character limit
+    if len(formatted_history) > MAX_MESSAGE_LENGTH:
+        # Send as a text file
+        with BytesIO(str.encode(formatted_history)) as out_file:
+            out_file.name = "command_history.txt"
+            await message.reply_document(
+                document=out_file,
+                caption="__Limit exceeded, so sending as file__",
+                quote=True,
+            )
+            os.remove("command_history.txt")
+    else:
+        # Send as a regular message
+        await message.reply_text(f"<b>Command History:</b>\n{formatted_history}", quote=True)
+        
+        
 
 if __name__ == "__main__":
     try:

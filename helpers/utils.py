@@ -3,6 +3,7 @@
 
 from asyncio.subprocess import PIPE
 import os
+import json
 from time import time
 from typing import Optional
 from asyncio import create_subprocess_exec, create_subprocess_shell, wait_for
@@ -398,3 +399,32 @@ async def processMediaGroup(chat_message, bot, message):
         if os.path.exists(path):
             os.remove(path)
     return False
+
+    
+def json_parser(data: Any, indent: Union[int, None] = None, ensure_ascii: bool = False) -> Any:
+    """
+    Parses and formats JSON-like data.
+    
+    Args:
+        data: The input data to parse and format
+        indent: Number of spaces for indentation. None for compact output
+        ensure_ascii: If False, non-ASCII characters are allowed (default)
+    
+    Returns:
+        Parsed and formatted data
+    """
+    if isinstance(data, (dict, list)):
+        try:
+            return json.dumps(data, indent=indent, ensure_ascii=ensure_ascii) if indent is not None else data
+        except Exception:
+            return data
+ 
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+            return json.dumps(parsed, indent=indent, ensure_ascii=ensure_ascii) if indent is not None else parsed
+        except JSONDecodeError:
+            return data
+ 
+    return data
+    
