@@ -5,7 +5,7 @@ from asyncio.subprocess import PIPE
 import os
 import json
 from time import time
-from typing import Optional
+from typing import Optional, Union, Any
 from asyncio import create_subprocess_exec, create_subprocess_shell, wait_for
 from PIL import Image
 from pyleaves import Leaves
