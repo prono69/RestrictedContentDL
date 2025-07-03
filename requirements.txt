@@ -1,5 +1,6 @@
-Pyrofork
-TgCrypto
+pyrofork
+# TgCrypto
+tgcrypto-pyrofork
 Pyleaves
 python-dotenv
 psutil

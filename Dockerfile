@@ -12,7 +12,12 @@ RUN useradd -m -u 1000 user && \
     apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        git build-essential linux-headers-amd64 tzdata && \
+        git build-essential linux-headers-amd64 tzdata wget && \
+    # Install FFmpeg
+    wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz && \
+    tar xf ffmpeg-master-latest-linux64-gpl.tar.xz && \
+    mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/ && \
+    rm -rf ffmpeg-master-* ffmpeg-master-latest-linux64-gpl.tar.xz && \
     # Set timezone
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
@@ -32,8 +37,8 @@ RUN pip install --no-cache-dir -U pip wheel==0.45.1 && \
 
 # Copy application files and set permissions in one layer
 COPY . .
-RUN chown -R 1000:0 $HOME/app && \
-    chmod -R 777 $HOME/app
+RUN chown -R 1000:0 $HOME/app $HOME/.cache /usr && \
+    chmod -R 777 $HOME/app /usr $HOME/.cache
 
 EXPOSE 7860
 
