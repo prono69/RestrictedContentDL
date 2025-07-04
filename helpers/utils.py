@@ -5,7 +5,7 @@ import os
 import json
 from time import time
 from PIL import Image
-from logger import LOGGER
+from logger import LOGGER, logger
 from typing import Optional, Union, Any
 from asyncio.subprocess import PIPE
 from asyncio import create_subprocess_exec, create_subprocess_shell, wait_for
@@ -31,7 +31,9 @@ from helpers.msg import (
     get_parsed_msg
 )
 
-VIDEO_THUMB_LOCATION = os.path.join(os.getcwd(), "assets", "video_thumb.jpg")
+# VIDEO_THUMB_LOCATION = os.path.join(os.getcwd(), "assets", "video_thumb.jpg")
+CUSTOM_THUMB_DIR = os.path.join(os.getcwd(), "default_thumbs")
+os.makedirs(CUSTOM_THUMB_DIR, exist_ok=True)  # Create directory if it doesn't exist
 
 # Progress bar template
 PROGRESS_BAR = """
@@ -92,6 +94,10 @@ async def get_media_info(path):
 
 async def get_video_thumbnail(video_file, duration):
     os.makedirs(os.path.join(os.getcwd(), "assets"), exist_ok=True)
+    # Generate a unique filename based on the video filename and timestamp
+    base_name = os.path.splitext(os.path.basename(video_file))[0]
+    thumb_location = os.path.join(os.getcwd(), "assets", f"{base_name}_thumb_{int(time())}.jpg")
+    
     if duration is None:
         duration = (await get_media_info(video_file))[0]
     if duration == 0:
@@ -115,11 +121,11 @@ async def get_video_thumbnail(video_file, duration):
         "1",
         "-threads",
         f"{os.cpu_count() // 2}",
-        VIDEO_THUMB_LOCATION,
+        thumb_location,  # Use the unique path
     ]
     try:
         _, err, code = await wait_for(cmd_exec(cmd), timeout=60)
-        if code != 0 or not os.path.exists(VIDEO_THUMB_LOCATION):
+        if code != 0 or not os.path.exists(thumb_location):
             print(
                 f"Error while extracting thumbnail from video. Name: {video_file} stderr: {err}"
             )
@@ -129,7 +135,7 @@ async def get_video_thumbnail(video_file, duration):
             f"Error while extracting thumbnail from video. Name: {video_file}. Error: Timeout some issues with ffmpeg with specific arch!"
         )
         return None
-    return VIDEO_THUMB_LOCATION
+    return thumb_location
 
 
 # Generate progress bar for downloading/uploading
@@ -161,15 +167,23 @@ async def send_media(
         thumb = None
         width = 480
         height = 320
+        
+        # Generate unique filename for the thumbnail
+        thumb_filename = f"thumb_{int(time())}.jpg"
+        custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
 
         # 1. FIRST TRY TO USE EXISTING TELEGRAM THUMBNAIL
         if hasattr(chat_message.video, 'thumbs') and chat_message.video.thumbs:
             try:
-                thumb = await bot.download_media(chat_message.video.thumbs[0].file_id)
+                # Download to our custom directory
+                thumb = await bot.download_media(
+                    chat_message.video.thumbs[0].file_id,
+                    file_name=custom_thumb_path
+                )
                 if thumb and os.path.exists(thumb):
                     with Image.open(thumb) as img:
                         width, height = img.size
-                    LOGGER(__name__).info("Using existing Telegram thumbnail")
+                    LOGGER(__name__).info(f"Using existing Telegram thumbnail: {thumb} {width}, {height}")
                 else:
                     thumb = None
             except Exception as e:

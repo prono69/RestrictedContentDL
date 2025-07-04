@@ -6,7 +6,9 @@ import io
 from io import BytesIO
 import shutil
 import psutil
+from pathlib import Path
 import sys
+import logging
 import traceback
 import asyncio
 from time import time
@@ -21,7 +23,8 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from helpers.utils import (
     processMediaGroup,
     progressArgs,
-    send_media
+    send_media,
+    json_parser
 )
 
 from helpers.files import (
@@ -329,7 +332,7 @@ async def download_range(bot: Client, message: Message):
             await message.reply(f"❌ Error at {url}: {e}")
 
 
-@bot.on_message(filters.private & ~filters.command(["start", "help", "dl", "stats", "logs", "killall", "eval", "bash", "ehis", "bhis"]))
+@bot.on_message(~filters.command(["start", "help", "dl", "stats", "logs", "killall", "eval", "bash", "ehis", "bhis"]))
 async def handle_any_message(bot: Client, message: Message):
     if message.text and not message.text.startswith("/"):
         await track_task(handle_download(bot, message, message.text))
@@ -457,7 +460,6 @@ async def aexec(code, client, message):
     header = (
         "async def __aexec(client, message):\n"
         f"{indent}import os\n"
-        f"{indent}import wget\n"
         f"{indent}import requests\n"
         f"{indent}from pprint import pformat\n"
         f"{indent}neo = message\n"
@@ -596,9 +598,13 @@ async def show_history(_, message):
         # Send as a regular message
         await message.reply_text(f"<b>Command History:</b>\n{formatted_history}", quote=True)
         
-        
+
 
 if __name__ == "__main__":
+    # Create folders if they don't exist
+    Path("assets").mkdir(parents=True, exist_ok=True)
+    Path("default_thumbs").mkdir(parents=True, exist_ok=True)
+
     try:
         LOGGER(__name__).info("Bot Started!")
         user.start()

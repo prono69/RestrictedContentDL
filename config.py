@@ -28,5 +28,6 @@ class PyroConf(object):
     API_HASH = getenv("API_HASH", "eb06d4abfb49dc3eeb1aeb98ae0f581e")
     BOT_TOKEN = getenv("BOT_TOKEN")
     SESSION_STRING = getenv("SESSION_STRING")
-    OWNER_ID = int(getenv("API_ID", "790841356"))
+    OWNER_ID = int(getenv("OWNER_ID", "790841356"))
+    # OWNER_ID = 790841356
     BOT_START_TIME = time()

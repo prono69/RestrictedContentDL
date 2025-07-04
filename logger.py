@@ -18,6 +18,8 @@ logging.basicConfig(
     ],
 )
 
+logger = logging.getLogger(__name__)
+
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
 
