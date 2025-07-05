@@ -35,13 +35,52 @@ from helpers.msg import (
 CUSTOM_THUMB_DIR = os.path.join(os.getcwd(), "default_thumbs")
 os.makedirs(CUSTOM_THUMB_DIR, exist_ok=True)  # Create directory if it doesn't exist
 
-# Progress bar template
+# Default progress bar template
 PROGRESS_BAR = """
+🌊 {bar} `{percentage:.1f}%`
+
 **➜ Progress:** `{current}` **of** `{total}`
-**➜ Percentage:** `{percentage:.2f}%`
 **➜ Speed:** `{speed}/s`
-**➜ Estimated Time Left:** `{est_time}`
+**➜ Elapsed:** `{elapsed}`
+**➜ ETA:** `{eta}`
+{status_emoji} __{status_message}__
 """
+
+TEMPLATE_FILE = "progress_template.txt"
+memory_template = PROGRESS_BAR
+
+
+def get_active_template():
+    """Get the current progress bar template (prefers in-memory)."""
+    return memory_template or load_template_from_file()
+
+
+def load_template_from_file():
+    """Load saved template from file."""
+    if os.path.exists(TEMPLATE_FILE):
+        with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    return PROGRESS_BAR
+
+
+def save_template_to_file(template: str):
+    """Save template to disk (persistent)."""
+    with open(TEMPLATE_FILE, "w", encoding="utf-8") as f:
+        f.write(template)
+
+
+def reset_template():
+    """Reset both in-memory and file to default."""
+    global memory_template
+    memory_template = PROGRESS_BAR
+    save_template_to_file(PROGRESS_BAR)
+
+
+def set_memory_template(template: str):
+    """Set a new in-memory template."""
+    global memory_template
+    memory_template = template
+    
 
 async def cmd_exec(cmd, shell=False):
     if shell:
@@ -126,25 +165,31 @@ async def get_video_thumbnail(video_file, duration):
     try:
         _, err, code = await wait_for(cmd_exec(cmd), timeout=60)
         if code != 0 or not os.path.exists(thumb_location):
-            print(
+            logger.error(
                 f"Error while extracting thumbnail from video. Name: {video_file} stderr: {err}"
             )
             return None
     except:
-        print(
+        logger.error(
             f"Error while extracting thumbnail from video. Name: {video_file}. Error: Timeout some issues with ffmpeg with specific arch!"
         )
         return None
     return thumb_location
 
 
-# Generate progress bar for downloading/uploading
+# Generate progress bar args dynamically using template
 def progressArgs(action: str, progress_message, start_time):
-    return (action, progress_message, start_time, PROGRESS_BAR, "▓", "░")
+    return (
+        action,
+        progress_message,
+        start_time,
+        get_active_template()  # <- uses latest template
+    )
+
 
 
 async def send_media(
-    bot, message, chat_message, media_path, media_type, caption, progress_message, start_time
+    bot, message, chat_message, user, media_path, media_type, caption, progress_message, start_time
 ):
     file_size = os.path.getsize(media_path)
 
@@ -176,7 +221,7 @@ async def send_media(
         if hasattr(chat_message.video, 'thumbs') and chat_message.video.thumbs:
             try:
                 # Download to our custom directory
-                thumb = await bot.download_media(
+                thumb = await user.download_media(
                     chat_message.video.thumbs[0].file_id,
                     file_name=custom_thumb_path
                 )
@@ -188,6 +233,8 @@ async def send_media(
                     thumb = None
             except Exception as e:
                 LOGGER(__name__).warning(f"Failed to download Telegram thumbnail: {e}")
+                if os.path.exists(custom_thumb_path):
+                	os.remove(custom_thumb_path)
                 thumb = None
 
         # 2. IF NO EXISTING THUMBNAIL, GENERATE ONE (ORIGINAL BEHAVIOR)
@@ -211,6 +258,9 @@ async def send_media(
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
+        if os.path.exists(thumb):
+        	os.remove(thumb)
+        	
     elif media_type == "audio":
         duration, artist, title = await get_media_info(media_path)
         await message.reply_audio(
@@ -229,9 +279,16 @@ async def send_media(
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
+    elif media_type == "animation":
+        await message.reply_animation(
+            media_path,
+            caption=caption or "",
+            progress=Leaves.progress_for_pyrogram,
+            progress_args=progress_args,
+        )    
         
 
-async def processMediaGroup(chat_message, bot, message):
+async def processMediaGroup(chat_message, bot, message, user):
     media_group_messages = await chat_message.get_media_group()
     valid_media = []
     temp_paths = []
@@ -268,10 +325,14 @@ async def processMediaGroup(chat_message, bot, message):
                     width = 480
                     height = 320
                     
+                    # Generate unique filename for the thumbnail
+                    thumb_filename = f"group_thumb_{int(time())}.jpg"
+                    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+                    
                     # 1. Try to use existing Telegram thumbnail
                     if hasattr(msg.video, 'thumbs') and msg.video.thumbs:
                         try:
-                            thumb = await bot.download_media(msg.video.thumbs[0].file_id)
+                            thumb = await user.download_media(msg.video.thumbs[0].file_id, file_name=custom_thumb_path)
                             if thumb and os.path.exists(thumb):
                                 with Image.open(thumb) as img:
                                     width, height = img.size

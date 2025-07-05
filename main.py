@@ -24,7 +24,11 @@ from helpers.utils import (
     processMediaGroup,
     progressArgs,
     send_media,
-    json_parser
+    json_parser,
+    set_memory_template,
+    save_template_to_file,
+    reset_template,
+    get_active_template
 )
 
 from helpers.files import (
@@ -43,6 +47,7 @@ from helpers.msg import (
 
 from config import PyroConf
 from logger import LOGGER
+from cmd_list import COMMANDS
 
 # Initialize the bot client
 bot = Client(
@@ -50,8 +55,7 @@ bot = Client(
     api_id=PyroConf.API_ID,
     api_hash=PyroConf.API_HASH,
     bot_token=PyroConf.BOT_TOKEN,
-    workers=1000,
-    parse_mode=ParseMode.MARKDOWN,
+    workers=1000
 )
 
 # Client for user session
@@ -159,7 +163,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
         )
  
         if chat_message.media_group_id:
-            if not await processMediaGroup(chat_message, bot, message):
+            if not await processMediaGroup(chat_message, bot, message, user):
                 await message.reply(
                     "**Could not extract any valid media from the media group.**"
                 )
@@ -195,6 +199,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 bot,
                 message,
                 chat_message,
+                user,
                 media_path,
                 media_type,
                 parsed_caption,
@@ -332,7 +337,7 @@ async def download_range(bot: Client, message: Message):
             await message.reply(f"❌ Error at {url}: {e}")
 
 
-@bot.on_message(~filters.command(["start", "help", "dl", "stats", "logs", "killall", "eval", "bash", "ehis", "bhis"]))
+@bot.on_message(filters.private & ~filters.command(COMMANDS))
 async def handle_any_message(bot: Client, message: Message):
     if message.text and not message.text.startswith("/"):
         await track_task(handle_download(bot, message, message.text))
@@ -577,7 +582,6 @@ async def execution(_, message):
         await status_message.delete()
         
         
-
 @bot.on_message(filters.command("bhis") & filters.user(PyroConf.OWNER_ID))
 async def show_history(_, message):
     # Add numbering to each command and wrap in <code> tags
@@ -599,6 +603,37 @@ async def show_history(_, message):
         await message.reply_text(f"<b>Command History:</b>\n{formatted_history}", quote=True)
         
 
+@bot.on_message(filters.command("template") & filters.private)
+async def set_template(client, message):
+    if len(message.command) > 1 and message.command[1].lower() == "save":
+        save_template_to_file(get_active_template())
+        return await message.reply("💾 __Template saved to file (persistent).__")
+
+    try:
+        response = await message.ask(
+            "**Please send your new progress template now.**\n\n"
+            "**Placeholders:** `{bar}` `{percentage}` `{current}` `{total}` `{speed}` `{elapsed}` `{eta}` `{status_emoji}` `{status_message}`\n\n"
+            "__You can type__ `/cancel` __to abort.__",
+            timeout=60
+        )
+
+        if response.text.strip().lower() == "/cancel":
+            return await message.reply("❌ Cancelled.")
+
+        set_memory_template(response.text)
+        await message.reply("✅ __Custom progress template updated (in-memory).__")
+
+    except asyncio.TimeoutError:
+        await message.reply("⌛ **Timeout:** `No response received.`")
+    except Exception as e:
+        await message.reply(f"⚠️ **Unexpected error:** `{e}`")
+        
+        
+@bot.on_message(filters.command("retemp") & filters.private)
+async def reset_template_command(client, message):
+    reset_template()
+    await message.reply("🔄 **Template reset to default (in-memory and file).**")
+    
 
 if __name__ == "__main__":
     # Create folders if they don't exist

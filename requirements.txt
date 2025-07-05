@@ -1,7 +1,7 @@
 pyrofork
 # TgCrypto
 tgcrypto-pyrofork
-Pyleaves
+git+https://github.com/prono69/PyLeaves.git
 python-dotenv
 psutil
 pillow
