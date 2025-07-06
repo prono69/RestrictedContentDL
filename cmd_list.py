@@ -15,5 +15,6 @@ COMMANDS = [
     "ehis",
     "bhis",
     "template",
-    "retemp"
+    "retemp",
+    "ping"
 ]

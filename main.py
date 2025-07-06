@@ -12,6 +12,7 @@ import logging
 import traceback
 import asyncio
 from time import time
+from datetime import timedelta
 from pprint import pformat  # For pretty-printing
 
 from pyleaves import Leaves
@@ -48,6 +49,8 @@ from helpers.msg import (
 from config import PyroConf
 from logger import LOGGER
 from cmd_list import COMMANDS
+
+START_TIME = time()
 
 # Initialize the bot client
 bot = Client(
@@ -171,7 +174,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
  
         elif chat_message.media:
             start_time = time()
-            progress_message = await message.reply("**📥 Downloading Progress...**")
+            progress_message = await message.reply("**__📥 Downloading Progress...__**")
  
             filename = get_file_name(message_id, chat_message)
             download_path = get_download_path(message.id, filename)
@@ -180,7 +183,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 file_name=download_path,
                 progress=Leaves.progress_for_pyrogram,
                 progress_args=progressArgs(
-                    "📥 Downloading Progress", progress_message, start_time
+                    "📥 **__Downloading Progress__**", progress_message, start_time
                 ),
             )
  
@@ -263,7 +266,7 @@ async def download_range(bot: Client, message: Message):
         pass
  
     prefix = args[1].rsplit("/", 1)[0]
-    loading = await message.reply(f"📥 **Downloading posts {start_id}–{end_id}…**")
+    loading = await message.reply(f"📥 **__Downloading posts {start_id}–{end_id}…__**")
  
     downloaded = skipped = failed = 0
  
@@ -633,7 +636,40 @@ async def set_template(client, message):
 async def reset_template_command(client, message):
     reset_template()
     await message.reply("🔄 **Template reset to default (in-memory and file).**")
+
     
+def get_readable_time(seconds: int) -> str:
+    return str(timedelta(seconds=int(seconds)))
+
+@bot.on_message(filters.command("ping"))
+async def ping_command(client, message):
+    start = time()
+    reply = await message.reply("🏓 **Pong!**")
+    end = time()
+
+    ping_ms = round((end - start) * 1000, 2)
+    uptime_sec = time() - START_TIME
+    uptime_str = get_readable_time(uptime_sec)
+
+    # Optional: create a color bar based on ping quality
+    if ping_ms < 100:
+        ping_color = "🟢"
+    elif ping_ms < 250:
+        ping_color = "🟡"
+    else:
+        ping_color = "🔴"
+
+    text = f"""
+🏓 **PONG!**
+
+{ping_color} **Ping:** `{ping_ms} ms`
+⏱️ **Uptime:** `{uptime_str}`
+
+⚙️ **Bot Status:** __Online & Stable__
+"""
+    await reply.edit(text)
+    
+
 
 if __name__ == "__main__":
     # Create folders if they don't exist

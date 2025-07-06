@@ -36,8 +36,7 @@ CUSTOM_THUMB_DIR = os.path.join(os.getcwd(), "default_thumbs")
 os.makedirs(CUSTOM_THUMB_DIR, exist_ok=True)  # Create directory if it doesn't exist
 
 # Default progress bar template
-PROGRESS_BAR = """
-🌊 {bar} `{percentage:.1f}%`
+PROGRESS_BAR = """🌊 {bar} `{percentage:.1f}%`
 
 **➜ Progress:** `{current}` **of** `{total}`
 **➜ Speed:** `{speed}/s`
@@ -296,7 +295,7 @@ async def processMediaGroup(chat_message, bot, message, user):
     thumb_paths = []  # To track downloaded thumbnails
 
     start_time = time()
-    progress_message = await message.reply("📥 Downloading media group...")
+    progress_message = await message.reply("📥 **__Downloading media group...__**")
     LOGGER(__name__).info(
         f"Downloading media group with {len(media_group_messages)} items..."
     )
@@ -307,7 +306,7 @@ async def processMediaGroup(chat_message, bot, message, user):
                 media_path = await msg.download(
                     progress=Leaves.progress_for_pyrogram,
                     progress_args=progressArgs(
-                        "📥 Downloading Progress", progress_message, start_time
+                        "📥 **__Downloading Progress__**", progress_message, start_time
                     ),
                 )
                 temp_paths.append(media_path)
