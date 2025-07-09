@@ -139,7 +139,18 @@ async def handle_download(bot: Client, message: Message, post_url: str):
         post_url = post_url.split("?", 1)[0]
  
     try:
-        chat_id, message_id = getChatMsgID(post_url)
+        # Special handling for t.me/b/ links
+        if 't.me/b/' in post_url:
+            parts = [p for p in post_url.split("/") if p]  # Split and remove empty parts
+            if len(parts) >= 5 and parts[2] == 'b':
+                chat_id = str(parts[3])
+                message_id = int(parts[4])
+            else:
+                raise ValueError("Invalid business link format")
+        else:
+            # Normal processing for other links
+            chat_id, message_id = getChatMsgID(post_url)
+            
         chat_message = await user.get_messages(chat_id=chat_id, message_ids=message_id)
  
         LOGGER(__name__).info(f"Downloading media from URL: {post_url}")
