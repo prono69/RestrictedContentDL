@@ -7,6 +7,8 @@ COMMANDS = [
     "start",
     "help",
     "dl",
+    "bdl",
+    "dlrange",
     "stats",
     "logs",
     "killall",
