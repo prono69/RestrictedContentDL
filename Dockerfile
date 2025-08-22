@@ -7,7 +7,7 @@ ENV TZ=Asia/Kolkata
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        git build-essential linux-headers-amd64 tzdata ffmpeg wget && \
+        git build-essential tzdata ffmpeg wget && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
     apt-get clean && \
