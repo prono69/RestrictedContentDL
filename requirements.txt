@@ -1,5 +1,4 @@
 pyrofork
-# TgCrypto
 tgcrypto-pyrofork
 git+https://github.com/prono69/PyLeaves.git
 python-dotenv
@@ -7,5 +6,3 @@ psutil
 pillow
 requests
 waifu-python
-fastapi
-uvicorn[standard]

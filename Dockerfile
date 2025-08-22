@@ -23,6 +23,4 @@ RUN pip install --no-cache-dir -U pip wheel==0.45.1 && \
 # Copy application files
 COPY . .
 
-EXPOSE 8080
-
-CMD ["bash", "-c", "python3 server.py & python3 main.py"]
+CMD ["bash", "-c", "python3 main.py"]
