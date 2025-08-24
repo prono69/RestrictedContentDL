@@ -3,6 +3,7 @@
 
 import os
 import json
+from json import JSONDecodeError
 from time import time
 from PIL import Image
 from logger import LOGGER, logger
@@ -197,6 +198,10 @@ async def send_media(
 
     progress_args = progressArgs("📥 Uploading Progress", progress_message, start_time)
     LOGGER(__name__).info(f"Uploading media: {media_path} ({media_type})")
+    
+    # Generate unique filename for the thumbnail
+    thumb_filename = f"thumb_{int(time())}.jpg"
+    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
 
     if media_type == "photo":
         await message.reply_photo(
@@ -211,10 +216,6 @@ async def send_media(
         thumb = None
         width = 480
         height = 320
-        
-        # Generate unique filename for the thumbnail
-        thumb_filename = f"thumb_{int(time())}.jpg"
-        custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
 
         # 1. FIRST TRY TO USE EXISTING TELEGRAM THUMBNAIL
         if hasattr(chat_message.video, 'thumbs') and chat_message.video.thumbs:
@@ -272,12 +273,61 @@ async def send_media(
             progress_args=progress_args,
         )
     elif media_type == "document":
+        thumb = None
+        width, height = 320, 320  # default fallback
+
+        # 1. Try existing Telegram thumbnail (if available in chat_message.document.thumbs)
+        if hasattr(chat_message.document, 'thumbs') and chat_message.document.thumbs:
+            try:
+                thumb = await user.download_media(
+                    chat_message.document.thumbs[0].file_id,
+                    file_name=custom_thumb_path
+                )
+                if thumb and os.path.exists(thumb):
+                    with Image.open(thumb) as img:
+                        width, height = img.size
+                    LOGGER(__name__).info(f"Using existing Telegram document thumbnail: {thumb} {width}, {height}")
+                else:
+                    thumb = None
+            except Exception as e:
+                LOGGER(__name__).warning(f"Failed to download Telegram document thumbnail: {e}")
+                if os.path.exists(custom_thumb_path):
+                    os.remove(custom_thumb_path)
+                thumb = None
+
+        # 2. If no existing thumbnail, generate one from the document (if video/pdf) or fallback
+        #if thumb is None:
+#            try:
+#                # for videos masquerading as docs
+#                if media_path.lower().endswith((".mp4", ".mkv", ".avi")):
+#                    duration = (await get_media_info(media_path))[0]
+#                    thumb = await get_video_thumbnail(media_path, duration)
+#                # for pdfs
+#                elif media_path.lower().endswith(".pdf"):
+#                    from pdf2image import convert_from_path
+#                    pages = convert_from_path(media_path, first_page=1, last_page=1)
+#                    if pages:
+#                        pages[0].save(custom_thumb_path, "JPEG")
+#                        thumb = custom_thumb_path
+#                # fallback: just skip
+#                if thumb and os.path.exists(thumb):
+#                    with Image.open(thumb) as img:
+#                        width, height = img.size
+#            except Exception as e:
+#                LOGGER(__name__).warning(f"Failed to generate document thumbnail: {e}")
+#                thumb = None
+
         await message.reply_document(
             media_path,
             caption=caption or "",
+            thumb=thumb,
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
+
+        if thumb and os.path.exists(thumb):
+            os.remove(thumb)
+            
     elif media_type == "animation":
         await message.reply_animation(
             media_path,
@@ -362,17 +412,68 @@ async def processMediaGroup(chat_message, bot, message, user):
                         )
                     )
                 elif msg.document:
+                    thumb = None
+                    width, height = 320, 320  # default fallback
+
+                    # Generate unique filename for the thumbnail
+                    thumb_filename = f"group_doc_thumb_{int(time())}.jpg"
+                    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                    # 1. Try existing Telegram thumbnail
+                    if hasattr(msg.document, 'thumbs') and msg.document.thumbs:
+                        try:
+                            thumb = await user.download_media(
+                                msg.document.thumbs[0].file_id,
+                                file_name=custom_thumb_path
+                            )
+                            if thumb and os.path.exists(thumb):
+                                with Image.open(thumb) as img:
+                                    width, height = img.size
+                                thumb_paths.append(thumb)  # track cleanup
+                                LOGGER(__name__).info("Using existing Telegram thumbnail for document")
+                            else:
+                                thumb = None
+                        except Exception as e:
+                            LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
+                            thumb = None
+
+                    # 2. If no existing thumbnail, generate one
+                    #if thumb is None:
+#                        try:
+#                            # video masquerading as doc
+#                            if media_path.lower().endswith((".mp4", ".mkv", ".avi")):
+#                                duration = (await get_media_info(media_path))[0]
+#                                thumb = await get_video_thumbnail(media_path, duration)
+#                            # PDF preview
+#                            elif media_path.lower().endswith(".pdf"):
+#                                from pdf2image import convert_from_path
+#                                pages = convert_from_path(media_path, first_page=1, last_page=1)
+#                                if pages:
+#                                    pages[0].save(custom_thumb_path, "JPEG")
+#                                    thumb = custom_thumb_path
+#                            if thumb and os.path.exists(thumb):
+#                                with Image.open(thumb) as img:
+#                                    width, height = img.size
+#                                thumb_paths.append(thumb)  # track cleanup
+#                        except Exception as e:
+#                            LOGGER(__name__).warning(f"Failed to generate document thumbnail: {e}")
+#                            thumb = None
+
                     valid_media.append(
-                        InputMediaDocument(media=media_path, caption=caption)
+                        InputMediaDocument(
+                            media=media_path,
+                            caption=caption,
+                            thumb=thumb
+                        )
                     )
                 elif msg.audio:
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
                     )
-                elif msg.animation:
-                    valid_media.append(
-                        InputMediaAnimation(media=media_path, caption=caption)
-                    )
+                #elif msg.animation:
+                    #valid_media.append(
+                        #InputMediaAnimation(media=media_path, caption=caption)
+                    #)
 
             except Exception as e:
                 LOGGER(__name__).info(f"Error downloading media: {e}")
@@ -386,9 +487,9 @@ async def processMediaGroup(chat_message, bot, message, user):
         try:
             await bot.send_media_group(chat_id=message.chat.id, media=valid_media)
             await progress_message.delete()
-        except Exception:
+        except Exception as e:
             await message.reply(
-                "**❌ Failed to send media group, trying individual uploads**"
+                f"**❌ Failed to send media group, trying individual uploads**\n`{e}`"
             )
             for media in valid_media:
                 try:
@@ -412,6 +513,7 @@ async def processMediaGroup(chat_message, bot, message, user):
                             chat_id=message.chat.id,
                             document=media.media,
                             caption=media.caption,
+                            thumb=media.thumb if hasattr(media, "thumb") else None,
                         )
                     elif isinstance(media, InputMediaAudio):
                         await bot.send_audio(
