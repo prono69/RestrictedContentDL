@@ -18,8 +18,10 @@ from pprint import pformat  # For pretty-printing
 from pyleaves import Leaves
 from pyrogram.enums import ParseMode
 from pyrogram import Client, filters
-from pyrogram.errors import PeerIdInvalid, BadRequest
+from pyrogram.errors import PeerIdInvalid, BadRequest, FloodWait
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+
+from helpers.forward import check_forward_permission, resolve_forward_chat_id
 
 from helpers.utils import (
     processMediaGroup,
@@ -76,6 +78,7 @@ COMMAND_ALIASES = {
     "restart": "systemctl restart mybot.service",
 }
 command_history = []
+forward_chat_id = None
 
 def track_task(coro):
     task = asyncio.create_task(coro)
@@ -134,11 +137,19 @@ async def help_command(_, message: Message):
 
 
 async def handle_download(bot: Client, message: Message, post_url: str):
+    global forward_chat_id
     # Cut off URL at '?' if present
     if "?" in post_url:
         post_url = post_url.split("?", 1)[0]
  
     try:
+        effective_forward_chat_id = None
+        if forward_chat_id:
+            ok, err_msg = await check_forward_permission(bot, forward_chat_id)
+            if not ok:
+                await message.reply(f"⚠️ **Forward chat misconfigured:** {err_msg}\n\n""The file will be sent to you only.")
+            else:
+                effective_forward_chat_id = forward_chat_id if PyroConf.FORWARD_ENABLED else None
         # Special handling for t.me/b/ links
         if 't.me/b/' in post_url:
             parts = [p for p in post_url.split("/") if p]  # Split and remove empty parts
@@ -177,7 +188,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
         )
  
         if chat_message.media_group_id:
-            if not await processMediaGroup(chat_message, bot, message, user):
+            if not await processMediaGroup(chat_message, bot, message, user, forward_chat_id=effective_forward_chat_id):
                 await message.reply(
                     "**Could not extract any valid media from the media group.**"
                 )
@@ -207,6 +218,8 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 if chat_message.video
                 else "audio"
                 if chat_message.audio
+                else "animation"
+                if chat_message.animation
                 else "document"
             )
             await send_media(
@@ -219,6 +232,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 parsed_caption,
                 progress_message,
                 start_time,
+                forward_chat_id=effective_forward_chat_id
             )
  
             cleanup_download(media_path)
@@ -228,7 +242,13 @@ async def handle_download(bot: Client, message: Message, post_url: str):
             await message.reply(parsed_text or parsed_caption)
         else:
             await message.reply("**No media or text found in the post URL.**")
- 
+            
+    except FloodWait as e:
+        wait_s = int(getattr(e, "value", 0) or 0)
+        LOGGER(__name__).warning(f"FloodWait in handle_download: {wait_s}s")
+        if wait_s > 0:
+            await asyncio.sleep(wait_s + 1)
+        return   
     except (PeerIdInvalid, BadRequest, KeyError):
         await message.reply("**Make sure the user client is part of the chat.**")
     except Exception as e:
@@ -680,15 +700,54 @@ async def ping_command(client, message):
 """
     await reply.edit(text)
     
+    
+@bot.on_message(filters.command("forward") & filters.user(PyroConf.OWNER_ID))
+async def forward_toggle(client, message):
+    if not PyroConf.FORWARD_CHAT_ID:
+        return await message.reply("❌ `FORWARD_CHAT_ID` is not set in config.")
+
+    args = message.command
+    if len(args) < 2:
+        return await message.reply("on, off, status")
+
+    action = args[1].lower()
+
+    if action == "on":
+        PyroConf.FORWARD_ENABLED = True
+        await message.reply(f"✅ File forwarding **enabled**.\nForwarding to: `{FORWARD_CHAT_ID}`")
+    elif action == "off":
+        PyroConf.FORWARD_ENABLED = False
+        await message.reply("🚫 File forwarding **disabled**.")
+    elif action == "status":
+        state = "✅ Enabled" if PyroConf.FORWARD_ENABLED else "🚫 Disabled"
+        chat = f"`{PyroConf.FORWARD_CHAT_ID}`" if PyroConf.FORWARD_CHAT_ID else "Not set"
+        await message.reply(
+            f"**Forward Status:** {state}\n"
+            f"**Forward Chat ID:** {chat}"
+        )
+    else:
+        await message.reply("on, off, status")    
+    
+    
+async def initialize():
+    global forward_chat_id
+
+    if PyroConf.FORWARD_CHAT_ID:
+        forward_chat_id = await resolve_forward_chat_id(PyroConf.FORWARD_CHAT_ID)
+        PyroConf.FORWARD_ENABLED = True  # sync with resolved state
+        LOGGER(__name__).info(f"Auto-forward enabled. Target chat: {forward_chat_id}")
+    else:
+        PyroConf.FORWARD_ENABLED = False
+        LOGGER(__name__).info("Auto-forward disabled. FORWARD_CHAT_ID not set.")
 
 
 if __name__ == "__main__":
     # Create folders if they don't exist
     Path("assets").mkdir(parents=True, exist_ok=True)
     Path("default_thumbs").mkdir(parents=True, exist_ok=True)
-
     try:
         LOGGER(__name__).info("Bot Started!")
+        asyncio.get_event_loop().run_until_complete(initialize())
         user.start()
         bot.run()
     except KeyboardInterrupt:

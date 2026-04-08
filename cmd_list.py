@@ -18,5 +18,6 @@ COMMANDS = [
     "bhis",
     "template",
     "retemp",
-    "ping"
+    "ping",
+    "forward"
 ]

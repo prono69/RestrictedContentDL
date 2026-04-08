@@ -3,6 +3,7 @@
 
 import os
 import json
+import asyncio
 from json import JSONDecodeError
 from time import time
 from PIL import Image
@@ -14,6 +15,7 @@ from asyncio import create_subprocess_exec, create_subprocess_shell, wait_for
 from pyleaves import Leaves
 from pyrogram.parser import Parser
 from pyrogram.utils import get_channel_id
+from pyrogram.errors import FloodWait, BadRequest
 from pyrogram.types import (
     InputMediaPhoto,
     InputMediaVideo,
@@ -189,7 +191,8 @@ def progressArgs(action: str, progress_message, start_time):
 
 
 async def send_media(
-    bot, message, chat_message, user, media_path, media_type, caption, progress_message, start_time
+    bot, message, chat_message, user, media_path, media_type, caption, progress_message, start_time,
+    forward_chat_id=None  # NEW ARGUMENT
 ):
     file_size = os.path.getsize(media_path)
 
@@ -203,15 +206,16 @@ async def send_media(
     thumb_filename = f"thumb_{int(time())}.jpg"
     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
 
+    sent_message = None  # TRACK SENT MESSAGE
+
     if media_type == "photo":
-        await message.reply_photo(
+        sent_message = await message.reply_photo(
             media_path,
             caption=caption or "",
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
     elif media_type == "video":
-        # Clean up old thumbnail if exists
         duration = (await get_media_info(media_path))[0]
         thumb = None
         width = 480
@@ -220,7 +224,6 @@ async def send_media(
         # 1. FIRST TRY TO USE EXISTING TELEGRAM THUMBNAIL
         if hasattr(chat_message.video, 'thumbs') and chat_message.video.thumbs:
             try:
-                # Download to our custom directory
                 thumb = await user.download_media(
                     chat_message.video.thumbs[0].file_id,
                     file_name=custom_thumb_path
@@ -234,7 +237,7 @@ async def send_media(
             except Exception as e:
                 LOGGER(__name__).warning(f"Failed to download Telegram thumbnail: {e}")
                 if os.path.exists(custom_thumb_path):
-                	os.remove(custom_thumb_path)
+                    os.remove(custom_thumb_path)
                 thumb = None
 
         # 2. IF NO EXISTING THUMBNAIL, GENERATE ONE (ORIGINAL BEHAVIOR)
@@ -243,27 +246,27 @@ async def send_media(
             if thumb is not None and thumb != "none":
                 with Image.open(thumb) as img:
                     width, height = img.size
-            	
             elif thumb == "none":
                 thumb = None
             LOGGER(__name__).info("Generated new thumbnail")
 
-        await message.reply_video(
+        sent_message = await message.reply_video(
             media_path,
             duration=duration,
             width=width,
             height=height,
             thumb=thumb,
             caption=caption or "",
+            supports_streaming=True,
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
-        if os.path.exists(thumb):
-        	os.remove(thumb)
-        	
+        if thumb and os.path.exists(thumb):
+            os.remove(thumb)
+
     elif media_type == "audio":
         duration, artist, title = await get_media_info(media_path)
-        await message.reply_audio(
+        sent_message = await message.reply_audio(
             media_path,
             duration=duration,
             performer=artist,
@@ -274,9 +277,9 @@ async def send_media(
         )
     elif media_type == "document":
         thumb = None
-        width, height = 320, 320  # default fallback
+        width, height = 320, 320
 
-        # 1. Try existing Telegram thumbnail (if available in chat_message.document.thumbs)
+        # 1. Try existing Telegram thumbnail
         if hasattr(chat_message.document, 'thumbs') and chat_message.document.thumbs:
             try:
                 thumb = await user.download_media(
@@ -295,54 +298,53 @@ async def send_media(
                     os.remove(custom_thumb_path)
                 thumb = None
 
-        # 2. If no existing thumbnail, generate one from the document (if video/pdf) or fallback
-        #if thumb is None:
-#            try:
-#                # for videos masquerading as docs
-#                if media_path.lower().endswith((".mp4", ".mkv", ".avi")):
-#                    duration = (await get_media_info(media_path))[0]
-#                    thumb = await get_video_thumbnail(media_path, duration)
-#                # for pdfs
-#                elif media_path.lower().endswith(".pdf"):
-#                    from pdf2image import convert_from_path
-#                    pages = convert_from_path(media_path, first_page=1, last_page=1)
-#                    if pages:
-#                        pages[0].save(custom_thumb_path, "JPEG")
-#                        thumb = custom_thumb_path
-#                # fallback: just skip
-#                if thumb and os.path.exists(thumb):
-#                    with Image.open(thumb) as img:
-#                        width, height = img.size
-#            except Exception as e:
-#                LOGGER(__name__).warning(f"Failed to generate document thumbnail: {e}")
-#                thumb = None
-
-        await message.reply_document(
+        sent_message = await message.reply_document(
             media_path,
             caption=caption or "",
             thumb=thumb,
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
-
         if thumb and os.path.exists(thumb):
             os.remove(thumb)
-            
+
     elif media_type == "animation":
-        await message.reply_animation(
+        sent_message = await message.reply_animation(
             media_path,
             caption=caption or "",
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
-        )    
+        )
+
+    # FORWARD TO ADDITIONAL CHAT IF REQUESTED
+    if forward_chat_id and sent_message:
+        for attempt in range(2):
+            try:
+                await bot.copy_message(
+                    chat_id=forward_chat_id,
+                    from_chat_id=sent_message.chat.id,
+                    message_id=sent_message.id,
+                )
+                LOGGER(__name__).info(f"Copied media to chat: {forward_chat_id}")
+                break
+            except FloodWait as e:
+                wait_s = int(getattr(e, "value", 0) or 0)
+                LOGGER(__name__).warning(f"FloodWait while copying media: {wait_s}s")
+                if wait_s > 0 and attempt == 0:
+                    await asyncio.sleep(wait_s + 1)
+                    continue
+                LOGGER(__name__).error(f"Failed to copy media after retry: FloodWait")
+            except Exception as e:
+                LOGGER(__name__).error(f"Failed to copy media to {forward_chat_id}: {e}")
+                break
         
 
-async def processMediaGroup(chat_message, bot, message, user):
+async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=None):  # NEW ARGUMENT
     media_group_messages = await chat_message.get_media_group()
     valid_media = []
     temp_paths = []
     invalid_paths = []
-    thumb_paths = []  # To track downloaded thumbnails
+    thumb_paths = []
 
     start_time = time()
     progress_message = await message.reply("📥 **__Downloading media group...__**")
@@ -368,36 +370,32 @@ async def processMediaGroup(chat_message, bot, message, user):
                         InputMediaPhoto(media=media_path, caption=caption)
                     )
                 elif msg.video:
-                    # Handle video thumbnails
                     duration = (await get_media_info(media_path))[0]
                     thumb = None
                     width = 480
                     height = 320
                     
-                    # Generate unique filename for the thumbnail
                     thumb_filename = f"group_thumb_{int(time())}.jpg"
                     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
                     
-                    # 1. Try to use existing Telegram thumbnail
                     if hasattr(msg.video, 'thumbs') and msg.video.thumbs:
                         try:
                             thumb = await user.download_media(msg.video.thumbs[0].file_id, file_name=custom_thumb_path)
                             if thumb and os.path.exists(thumb):
                                 with Image.open(thumb) as img:
                                     width, height = img.size
-                                thumb_paths.append(thumb)  # Track for cleanup
+                                thumb_paths.append(thumb)
                                 LOGGER(__name__).info("Using existing Telegram thumbnail for media group video")
                         except Exception as e:
                             LOGGER(__name__).warning(f"Failed to download Telegram thumbnail: {e}")
                             thumb = None
                     
-                    # 2. If no existing thumbnail, generate one
                     if thumb is None:
                         thumb = await get_video_thumbnail(media_path, duration)
                         if thumb and thumb != "none":
                             with Image.open(thumb) as img:
                                 width, height = img.size
-                            thumb_paths.append(thumb)  # Track for cleanup
+                            thumb_paths.append(thumb)
                         elif thumb == "none":
                             thumb = None
                     
@@ -413,13 +411,11 @@ async def processMediaGroup(chat_message, bot, message, user):
                     )
                 elif msg.document:
                     thumb = None
-                    width, height = 320, 320  # default fallback
+                    width, height = 320, 320
 
-                    # Generate unique filename for the thumbnail
                     thumb_filename = f"group_doc_thumb_{int(time())}.jpg"
                     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
 
-                    # 1. Try existing Telegram thumbnail
                     if hasattr(msg.document, 'thumbs') and msg.document.thumbs:
                         try:
                             thumb = await user.download_media(
@@ -429,35 +425,13 @@ async def processMediaGroup(chat_message, bot, message, user):
                             if thumb and os.path.exists(thumb):
                                 with Image.open(thumb) as img:
                                     width, height = img.size
-                                thumb_paths.append(thumb)  # track cleanup
+                                thumb_paths.append(thumb)
                                 LOGGER(__name__).info("Using existing Telegram thumbnail for document")
                             else:
                                 thumb = None
                         except Exception as e:
                             LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
                             thumb = None
-
-                    # 2. If no existing thumbnail, generate one
-                    #if thumb is None:
-#                        try:
-#                            # video masquerading as doc
-#                            if media_path.lower().endswith((".mp4", ".mkv", ".avi")):
-#                                duration = (await get_media_info(media_path))[0]
-#                                thumb = await get_video_thumbnail(media_path, duration)
-#                            # PDF preview
-#                            elif media_path.lower().endswith(".pdf"):
-#                                from pdf2image import convert_from_path
-#                                pages = convert_from_path(media_path, first_page=1, last_page=1)
-#                                if pages:
-#                                    pages[0].save(custom_thumb_path, "JPEG")
-#                                    thumb = custom_thumb_path
-#                            if thumb and os.path.exists(thumb):
-#                                with Image.open(thumb) as img:
-#                                    width, height = img.size
-#                                thumb_paths.append(thumb)  # track cleanup
-#                        except Exception as e:
-#                            LOGGER(__name__).warning(f"Failed to generate document thumbnail: {e}")
-#                            thumb = None
 
                     valid_media.append(
                         InputMediaDocument(
@@ -470,10 +444,6 @@ async def processMediaGroup(chat_message, bot, message, user):
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
                     )
-                #elif msg.animation:
-                    #valid_media.append(
-                        #InputMediaAnimation(media=media_path, caption=caption)
-                    #)
 
             except Exception as e:
                 LOGGER(__name__).info(f"Error downloading media: {e}")
@@ -484,55 +454,59 @@ async def processMediaGroup(chat_message, bot, message, user):
     LOGGER(__name__).info(f"Valid media count: {len(valid_media)}")
 
     if valid_media:
+        sent_messages = None  # TRACK SENT MESSAGES
         try:
-            await bot.send_media_group(chat_id=message.chat.id, media=valid_media)
+            sent_messages = await bot.send_media_group(chat_id=message.chat.id, media=valid_media)
             await progress_message.delete()
         except Exception as e:
             await message.reply(
                 f"**❌ Failed to send media group, trying individual uploads**\n`{e}`"
             )
+            sent_messages = []  # COLLECT INDIVIDUALLY SENT MESSAGES
             for media in valid_media:
                 try:
                     if isinstance(media, InputMediaPhoto):
-                        await bot.send_photo(
+                        sent = await bot.send_photo(
                             chat_id=message.chat.id,
                             photo=media.media,
                             caption=media.caption,
                         )
                     elif isinstance(media, InputMediaVideo):
-                        await bot.send_video(
+                        sent = await bot.send_video(
                             chat_id=message.chat.id,
                             video=media.media,
                             caption=media.caption,
                             thumb=media.thumb,
                             width=media.width,
-                            height=media.height
+                            height=media.height,
+                            supports_streaming=True,
                         )
                     elif isinstance(media, InputMediaDocument):
-                        await bot.send_document(
+                        sent = await bot.send_document(
                             chat_id=message.chat.id,
                             document=media.media,
                             caption=media.caption,
                             thumb=media.thumb if hasattr(media, "thumb") else None,
                         )
                     elif isinstance(media, InputMediaAudio):
-                        await bot.send_audio(
+                        sent = await bot.send_audio(
                             chat_id=message.chat.id,
                             audio=media.media,
                             caption=media.caption,
                         )
-                    elif isinstance(media, InputMediaAnimation):
-                        await bot.send_animation(
-                            chat_id=message.chat.id,
-                            animation=media.media,
-                            caption=media.caption,
-                        )
+                    #elif isinstance(media, InputMediaAnimation):
+                        #sent = await bot.send_animation(
+                            #chat_id=message.chat.id,
+                            #animation=media.media,
+                            #caption=media.caption,
+                        #)
                     elif isinstance(media, Voice):
-                        await bot.send_voice(
+                        sent = await bot.send_voice(
                             chat_id=message.chat.id,
                             voice=media.media,
                             caption=media.caption,
-                        )    
+                        )
+                    sent_messages.append(sent)  # COLLECT EACH SENT MESSAGE
                 except Exception as individual_e:
                     await message.reply(
                         f"Failed to upload individual media: {individual_e}"
@@ -540,7 +514,31 @@ async def processMediaGroup(chat_message, bot, message, user):
 
             await progress_message.delete()
 
-        # Cleanup all temporary files
+        # FORWARD TO ADDITIONAL CHAT IF REQUESTED
+        if forward_chat_id and sent_messages:
+            try:
+                msg_ids = [m.id for m in sent_messages if m]
+                if msg_ids:
+                    source_chat_id = sent_messages[0].chat.id
+                    for attempt in range(2):
+                        try:
+                            await bot.copy_media_group(
+                                chat_id=forward_chat_id,
+                                from_chat_id=source_chat_id,
+                                message_id=msg_ids[0],
+                            )
+                            LOGGER(__name__).info(f"Copied media group to chat: {forward_chat_id}")
+                            break
+                        except FloodWait as e:
+                            wait_s = int(getattr(e, "value", 0) or 0)
+                            LOGGER(__name__).warning(f"FloodWait while copying media group: {wait_s}s")
+                            if wait_s > 0 and attempt == 0:
+                                await asyncio.sleep(wait_s + 1)
+                                continue
+                            raise
+            except Exception as e:
+                LOGGER(__name__).error(f"Failed to copy media group to {forward_chat_id}: {e}")
+
         for path in temp_paths + invalid_paths + thumb_paths:
             cleanup_download(path)
         return True

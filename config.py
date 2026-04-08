@@ -31,3 +31,5 @@ class PyroConf(object):
     OWNER_ID = int(getenv("OWNER_ID", "790841356"))
     # OWNER_ID = 790841356
     BOT_START_TIME = time()
+    FORWARD_CHAT_ID = getenv("FORWARD_CHAT_ID", "").strip() or None
+    FORWARD_ENABLED = bool(getenv("FORWARD_ENABLED", False))
