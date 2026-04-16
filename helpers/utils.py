@@ -444,6 +444,10 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
                     )
+                elif msg.animation:
+                    valid_media.append(
+                        InputMediaAnimation(media=media_path, caption=caption)
+                    )    
 
             except Exception as e:
                 LOGGER(__name__).info(f"Error downloading media: {e}")
@@ -494,12 +498,12 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             audio=media.media,
                             caption=media.caption,
                         )
-                    #elif isinstance(media, InputMediaAnimation):
-                        #sent = await bot.send_animation(
-                            #chat_id=message.chat.id,
-                            #animation=media.media,
-                            #caption=media.caption,
-                        #)
+                    elif isinstance(media, InputMediaAnimation):
+                        sent = await bot.send_animation(
+                            chat_id=message.chat.id,
+                            animation=media.media,
+                            caption=media.caption,
+                        )
                     elif isinstance(media, Voice):
                         sent = await bot.send_voice(
                             chat_id=message.chat.id,
