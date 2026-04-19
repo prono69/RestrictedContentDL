@@ -308,13 +308,13 @@ async def send_media(
         if thumb and os.path.exists(thumb):
             os.remove(thumb)
 
-    elif media_type == "animation":
-        sent_message = await message.reply_animation(
-            media_path,
-            caption=caption or "",
-            progress=Leaves.progress_for_pyrogram,
-            progress_args=progress_args,
-        )
+    #elif media_type == "animation":
+        #sent_message = await message.reply_animation(
+            #media_path,
+            #caption=caption or "",
+            #progress=Leaves.progress_for_pyrogram,
+            #progress_args=progress_args,
+        #)
 
     # FORWARD TO ADDITIONAL CHAT IF REQUESTED
     if forward_chat_id and sent_message:
@@ -353,7 +353,7 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
     )
 
     for msg in media_group_messages:
-        if msg.photo or msg.video or msg.document or msg.audio or msg.animation:
+        if msg.photo or msg.video or msg.document or msg.audio: #or msg.animation:
             try:
                 media_path = await msg.download(
                     progress=Leaves.progress_for_pyrogram,
@@ -444,10 +444,10 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
                     )
-                elif msg.animation:
-                    valid_media.append(
-                        InputMediaAnimation(media=media_path, caption=caption)
-                    )    
+                #elif msg.animation:
+                    #valid_media.append(
+                        #InputMediaAnimation(media=media_path, caption=caption)
+                    #)    
 
             except Exception as e:
                 LOGGER(__name__).info(f"Error downloading media: {e}")
@@ -498,12 +498,12 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             audio=media.media,
                             caption=media.caption,
                         )
-                    elif isinstance(media, InputMediaAnimation):
-                        sent = await bot.send_animation(
-                            chat_id=message.chat.id,
-                            animation=media.media,
-                            caption=media.caption,
-                        )
+                    #elif isinstance(media, InputMediaAnimation):
+                        #sent = await bot.send_animation(
+                            #chat_id=message.chat.id,
+                            #animation=media.media,
+                            #caption=media.caption,
+                        #)
                     elif isinstance(media, Voice):
                         sent = await bot.send_voice(
                             chat_id=message.chat.id,

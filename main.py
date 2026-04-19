@@ -218,8 +218,8 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 if chat_message.video
                 else "audio"
                 if chat_message.audio
-                else "animation"
-                if chat_message.animation
+                #else "animation"
+                #if chat_message.animation
                 else "document"
             )
             await send_media(

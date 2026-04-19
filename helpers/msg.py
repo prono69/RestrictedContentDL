@@ -51,8 +51,8 @@ def get_file_name(message_id: int, chat_message) -> str:
         return f"{message_id}.ogg"
     elif chat_message.video_note:
         return f"{message_id}.mp4"
-    elif chat_message.animation:
-        return chat_message.animation.file_name or f"{message_id}.gif"
+    #elif chat_message.animation:
+        #return chat_message.animation.file_name or f"{message_id}.gif"
     elif chat_message.sticker:
         if chat_message.sticker.is_animated:
             return f"{message_id}.tgs"
