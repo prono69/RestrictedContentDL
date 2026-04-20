@@ -339,9 +339,10 @@ async def send_media(
                 break
         
 
-async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=None):  # NEW ARGUMENT
+async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=None):
     media_group_messages = await chat_message.get_media_group()
     valid_media = []
+    animation_media = []  # SEPARATE LIST FOR ANIMATIONS
     temp_paths = []
     invalid_paths = []
     thumb_paths = []
@@ -364,7 +365,7 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                 temp_paths.append(media_path)
 
                 caption = await get_parsed_msg(msg.caption or "", msg.caption_entities)
-                
+
                 if msg.photo:
                     valid_media.append(
                         InputMediaPhoto(media=media_path, caption=caption)
@@ -374,10 +375,10 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                     thumb = None
                     width = 480
                     height = 320
-                    
+
                     thumb_filename = f"group_thumb_{int(time())}.jpg"
                     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-                    
+
                     if hasattr(msg.video, 'thumbs') and msg.video.thumbs:
                         try:
                             thumb = await user.download_media(msg.video.thumbs[0].file_id, file_name=custom_thumb_path)
@@ -389,7 +390,7 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                         except Exception as e:
                             LOGGER(__name__).warning(f"Failed to download Telegram thumbnail: {e}")
                             thumb = None
-                    
+
                     if thumb is None:
                         thumb = await get_video_thumbnail(media_path, duration)
                         if thumb and thumb != "none":
@@ -398,7 +399,7 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             thumb_paths.append(thumb)
                         elif thumb == "none":
                             thumb = None
-                    
+
                     valid_media.append(
                         InputMediaVideo(
                             media=media_path,
@@ -445,9 +446,10 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                         InputMediaAudio(media=media_path, caption=caption)
                     )
                 elif msg.animation:
-                    valid_media.append(
+                    # COLLECT ANIMATIONS SEPARATELY
+                    animation_media.append(
                         InputMediaAnimation(media=media_path, caption=caption)
-                    )    
+                    )
 
             except Exception as e:
                 LOGGER(__name__).info(f"Error downloading media: {e}")
@@ -455,18 +457,32 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                     invalid_paths.append(media_path)
                 continue
 
-    LOGGER(__name__).info(f"Valid media count: {len(valid_media)}")
+    LOGGER(__name__).info(
+        f"Valid media count: {len(valid_media)}, Animation count: {len(animation_media)}"
+    )
 
+    if not valid_media and not animation_media:
+        await progress_message.delete()
+        await message.reply("❌ No valid media found in the media group.")
+        for path in invalid_paths + thumb_paths:
+            cleanup_download(path)
+        return False
+
+    sent_messages = []
+    group_sent_messages = []      # ONLY non-animation messages
+    animation_sent_messages = []  # ONLY animation messages
+
+    # SEND NON-ANIMATION MEDIA AS GROUP
     if valid_media:
-        sent_messages = None  # TRACK SENT MESSAGES
         try:
-            sent_messages = await bot.send_media_group(chat_id=message.chat.id, media=valid_media)
+            group_sent = await bot.send_media_group(chat_id=message.chat.id, media=valid_media)
+            group_sent_messages.extend(group_sent)
+            sent_messages.extend(group_sent)
             await progress_message.delete()
         except Exception as e:
             await message.reply(
                 f"**❌ Failed to send media group, trying individual uploads**\n`{e}`"
             )
-            sent_messages = []  # COLLECT INDIVIDUALLY SENT MESSAGES
             for media in valid_media:
                 try:
                     if isinstance(media, InputMediaPhoto):
@@ -498,19 +514,14 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             audio=media.media,
                             caption=media.caption,
                         )
-                    elif isinstance(media, InputMediaAnimation):
-                        sent = await bot.send_animation(
-                            chat_id=message.chat.id,
-                            animation=media.media,
-                            caption=media.caption,
-                        )
                     elif isinstance(media, Voice):
                         sent = await bot.send_voice(
                             chat_id=message.chat.id,
                             voice=media.media,
                             caption=media.caption,
                         )
-                    sent_messages.append(sent)  # COLLECT EACH SENT MESSAGE
+                    sent_messages.append(sent)
+                    group_sent_messages.append(sent)  # TRACK FOR FORWARDING
                 except Exception as individual_e:
                     await message.reply(
                         f"Failed to upload individual media: {individual_e}"
@@ -518,40 +529,68 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
 
             await progress_message.delete()
 
-        # FORWARD TO ADDITIONAL CHAT IF REQUESTED
-        if forward_chat_id and sent_messages:
-            try:
-                msg_ids = [m.id for m in sent_messages if m]
-                if msg_ids:
-                    source_chat_id = sent_messages[0].chat.id
-                    for attempt in range(2):
-                        try:
-                            await bot.copy_media_group(
-                                chat_id=forward_chat_id,
-                                from_chat_id=source_chat_id,
-                                message_id=msg_ids[0],
-                            )
-                            LOGGER(__name__).info(f"Copied media group to chat: {forward_chat_id}")
-                            break
-                        except FloodWait as e:
-                            wait_s = int(getattr(e, "value", 0) or 0)
-                            LOGGER(__name__).warning(f"FloodWait while copying media group: {wait_s}s")
-                            if wait_s > 0 and attempt == 0:
-                                await asyncio.sleep(wait_s + 1)
-                                continue
-                            raise
-            except Exception as e:
-                LOGGER(__name__).error(f"Failed to copy media group to {forward_chat_id}: {e}")
+    # SEND ANIMATIONS INDIVIDUALLY AFTER THE GROUP
+    for anim in animation_media:
+        try:
+            sent = await bot.send_animation(
+                chat_id=message.chat.id,
+                animation=anim.media,
+                caption=anim.caption,
+            )
+            animation_sent_messages.append(sent)
+            sent_messages.append(sent)
+            LOGGER(__name__).info("Sent animation separately after media group")
+        except Exception as e:
+            await message.reply(f"Failed to upload animation: {e}")
 
-        for path in temp_paths + invalid_paths + thumb_paths:
-            cleanup_download(path)
-        return True
+    # FORWARD TO ADDITIONAL CHAT IF REQUESTED
+    if forward_chat_id and sent_messages:
+        source_chat_id = sent_messages[0].chat.id
+        try:
+            # FORWARD MEDIA GROUP USING copy_media_group
+            if group_sent_messages:
+                for attempt in range(2):
+                    try:
+                        await bot.copy_media_group(
+                            chat_id=forward_chat_id,
+                            from_chat_id=source_chat_id,
+                            message_id=group_sent_messages[0].id,
+                        )
+                        LOGGER(__name__).info(f"Copied media group to chat: {forward_chat_id}")
+                        break
+                    except FloodWait as e:
+                        wait_s = int(getattr(e, "value", 0) or 0)
+                        LOGGER(__name__).warning(f"FloodWait while copying media group: {wait_s}s")
+                        if wait_s > 0 and attempt == 0:
+                            await asyncio.sleep(wait_s + 1)
+                            continue
+                        raise
 
-    await progress_message.delete()
-    await message.reply("❌ No valid media found in the media group.")
-    for path in invalid_paths + thumb_paths:
+            # FORWARD ANIMATIONS INDIVIDUALLY USING copy_message
+            for anim_msg in animation_sent_messages:
+                for attempt in range(2):
+                    try:
+                        await bot.copy_message(
+                            chat_id=forward_chat_id,
+                            from_chat_id=source_chat_id,
+                            message_id=anim_msg.id,
+                        )
+                        LOGGER(__name__).info(f"Copied animation to chat: {forward_chat_id}")
+                        break
+                    except FloodWait as e:
+                        wait_s = int(getattr(e, "value", 0) or 0)
+                        LOGGER(__name__).warning(f"FloodWait while copying animation: {wait_s}s")
+                        if wait_s > 0 and attempt == 0:
+                            await asyncio.sleep(wait_s + 1)
+                            continue
+                        raise
+
+        except Exception as e:
+            LOGGER(__name__).error(f"Failed to forward to {forward_chat_id}: {e}")
+
+    for path in temp_paths + invalid_paths + thumb_paths:
         cleanup_download(path)
-    return False
+    return True
     
     
 def json_parser(data: Any, indent: Union[int, None] = None, ensure_ascii: bool = False) -> Any:
