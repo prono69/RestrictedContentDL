@@ -460,6 +460,9 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
     LOGGER(__name__).info(
         f"Valid media count: {len(valid_media)}, Animation count: {len(animation_media)}"
     )
+    anim_notice = None
+    if animation_media:
+        anim_notice = await message.reply("ℹ️ **Your album contains GIF(s), they will be sent separately after the media group.**")
 
     if not valid_media and not animation_media:
         await progress_message.delete()
@@ -587,7 +590,10 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
 
         except Exception as e:
             LOGGER(__name__).error(f"Failed to forward to {forward_chat_id}: {e}")
-
+    
+    if anim_notice:
+        await anim_notice.delete()
+    
     for path in temp_paths + invalid_paths + thumb_paths:
         cleanup_download(path)
     return True
