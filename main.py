@@ -12,6 +12,7 @@ import logging
 import traceback
 import asyncio
 from time import time
+from PIL import Image
 from datetime import timedelta
 from pprint import pformat  # For pretty-printing
 
@@ -19,7 +20,16 @@ from pyleaves import Leaves
 from pyrogram.enums import ParseMode
 from pyrogram import Client, filters
 from pyrogram.errors import PeerIdInvalid, BadRequest, FloodWait
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import (
+    InputMediaPhoto,
+    InputMediaVideo,
+    InputMediaDocument,
+    InputMediaAudio,
+    InputMediaAnimation,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    Message,
+)
 
 from helpers.forward import check_forward_permission, resolve_forward_chat_id
 
@@ -31,7 +41,10 @@ from helpers.utils import (
     set_memory_template,
     save_template_to_file,
     reset_template,
-    get_active_template
+    get_active_template,
+    get_media_info,
+    get_video_thumbnail,
+    CUSTOM_THUMB_DIR
 )
 
 from helpers.files import (
@@ -340,8 +353,341 @@ async def download_range(bot: Client, message: Message):
         f"❌ **Failed**     : `{failed}` error(s)"
     )
 
+@bot.on_message(filters.command("gdl"))
+async def download_range_group(bot: Client, message: Message):
+    global forward_chat_id
+    args = message.text.split()
+
+    if len(args) < 3 or len(args) > 4 or not all(arg.startswith("https://t.me/") for arg in args[1:3]):
+        await message.reply(
+            "🚀 **Batch Download as Group**\n"
+            "`/gdl start_link end_link [forward_chat_id]`\n\n"
+            "💡 **Example:**\n"
+            "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120`\n"
+            "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890`"
+        )
+        return
+
+    try:
+        start_chat, start_id = getChatMsgID(args[1])
+        end_chat,   end_id   = getChatMsgID(args[2])
+    except Exception as e:
+        return await message.reply(f"**❌ Error parsing links:\n{e}**")
+        
+    if start_chat != end_chat:
+        return await message.reply("**❌ Both links must be from the same channel.**")
+    if start_id > end_id:
+        return await message.reply("**❌ Invalid range: start ID cannot exceed end ID.**")    
+
+    # USE args[3] IF PROVIDED, OTHERWISE FALL BACK TO GLOBAL
+    raw_forward_id = args[3] if len(args) == 4 else forward_chat_id
+
+    effective_forward_chat_id = None
+    if raw_forward_id:
+        ok, err_msg = await check_forward_permission(bot, raw_forward_id)
+        if not ok:
+            await message.reply(
+                f"⚠️ **Forward chat misconfigured:** {err_msg}\n\n"
+                "The file will be sent to you only."
+            )
+        else:
+            effective_forward_chat_id = raw_forward_id if PyroConf.FORWARD_ENABLED else None
+
+    try:
+        await user.get_chat(start_chat)
+    except Exception:
+        pass
+
+    loading = await message.reply(f"📥 **__Fetching posts {start_id}–{end_id}…__**")
+
+    # COLLECT ALL MEDIA AND ANIMATIONS SEPARATELY
+    valid_media = []       # compatible media for group sending
+    animation_media = []   # animations to send separately
+    temp_paths = []
+    thumb_paths = []
+    skipped = failed = 0
+    start_time = time()
+
+    for msg_id in range(start_id, end_id + 1):
+        try:
+            chat_msg = await user.get_messages(chat_id=start_chat, message_ids=msg_id)
+            if not chat_msg or not chat_msg.media:
+                skipped += 1
+                continue
+
+            # SKIP IF PART OF MEDIA GROUP - THOSE SHOULD BE HANDLED SEPARATELY
+            if chat_msg.media_group_id:
+                skipped += 1
+                continue
+
+            try:
+                media_path = await chat_msg.download(
+                    progress=Leaves.progress_for_pyrogram,
+                    progress_args=progressArgs(
+                        "📥 **__Downloading Progress__**", loading, start_time
+                    ),
+                )
+                temp_paths.append(media_path)
+                caption = await get_parsed_msg(chat_msg.caption or "", chat_msg.caption_entities)
+
+                if chat_msg.photo:
+                    valid_media.append(
+                        InputMediaPhoto(media=media_path, caption=caption)
+                    )
+                elif chat_msg.video:
+                    duration = (await get_media_info(media_path))[0]
+                    thumb = None
+                    width = 480
+                    height = 320
+
+                    thumb_filename = f"bdlg_thumb_{int(time())}.jpg"
+                    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                    if hasattr(chat_msg.video, 'thumbs') and chat_msg.video.thumbs:
+                        try:
+                            thumb = await user.download_media(
+                                chat_msg.video.thumbs[0].file_id,
+                                file_name=custom_thumb_path
+                            )
+                            if thumb and os.path.exists(thumb):
+                                with Image.open(thumb) as img:
+                                    width, height = img.size
+                                thumb_paths.append(thumb)
+                        except Exception as e:
+                            LOGGER(__name__).warning(f"Failed to download video thumbnail: {e}")
+                            thumb = None
+
+                    if thumb is None:
+                        thumb = await get_video_thumbnail(media_path, duration)
+                        if thumb and thumb != "none":
+                            with Image.open(thumb) as img:
+                                width, height = img.size
+                            thumb_paths.append(thumb)
+                        elif thumb == "none":
+                            thumb = None
+
+                    valid_media.append(
+                        InputMediaVideo(
+                            media=media_path,
+                            caption=caption,
+                            duration=duration,
+                            thumb=thumb,
+                            width=width,
+                            height=height
+                        )
+                    )
+                elif chat_msg.document:
+                    thumb = None
+                    width, height = 320, 320
+
+                    thumb_filename = f"bdlg_doc_thumb_{int(time())}.jpg"
+                    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                    if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
+                        try:
+                            thumb = await user.download_media(
+                                chat_msg.document.thumbs[0].file_id,
+                                file_name=custom_thumb_path
+                            )
+                            if thumb and os.path.exists(thumb):
+                                with Image.open(thumb) as img:
+                                    width, height = img.size
+                                thumb_paths.append(thumb)
+                            else:
+                                thumb = None
+                        except Exception as e:
+                            LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
+                            thumb = None
+
+                    valid_media.append(
+                        InputMediaDocument(
+                            media=media_path,
+                            caption=caption,
+                            thumb=thumb
+                        )
+                    )
+                elif chat_msg.audio:
+                    valid_media.append(
+                        InputMediaAudio(media=media_path, caption=caption)
+                    )
+                elif chat_msg.animation:
+                    # COLLECT ANIMATIONS SEPARATELY
+                    animation_media.append(
+                        InputMediaAnimation(media=media_path, caption=caption)
+                    )
+                else:
+                    skipped += 1
+                    continue
+
+            except Exception as e:
+                LOGGER(__name__).error(f"Error downloading msg {msg_id}: {e}")
+                failed += 1
+                continue
+
+        except Exception as e:
+            failed += 1
+            LOGGER(__name__).error(f"Error fetching msg {msg_id}: {e}")
+
+        await asyncio.sleep(1)
+
+    if not valid_media and not animation_media:
+        await loading.delete()
+        await message.reply("❌ No valid media found in the given range.")
+        for path in temp_paths + thumb_paths:
+            cleanup_download(path)
+        return
+
+    # NOTIFY USER IF ANIMATIONS EXIST
+    anim_notice = None
+    if animation_media:
+        anim_notice = await message.reply(
+            f"ℹ️ **Found {len(animation_media)} GIF(s) in the range, they will be sent separately after the media group.**"
+        )
+
+    sent_messages = []
+    group_sent_messages = []
+    animation_sent_messages = []
+
+    # SPLIT valid_media INTO CHUNKS OF 10 AND SEND EACH AS A GROUP
+    if valid_media:
+        chunks = [valid_media[i:i+10] for i in range(0, len(valid_media), 10)]
+        LOGGER(__name__).info(f"Sending {len(valid_media)} media in {len(chunks)} group(s)")
+
+        for idx, chunk in enumerate(chunks):
+            try:
+                await loading.edit(f"📤 **__Sending group {idx+1}/{len(chunks)}…__**")
+                group_sent = await bot.send_media_group(chat_id=message.chat.id, media=chunk)
+                group_sent_messages.extend(group_sent)
+                sent_messages.extend(group_sent)
+            except Exception as e:
+                await message.reply(
+                    f"**❌ Failed to send group {idx+1}, trying individually**\n`{e}`"
+                )
+                for media in chunk:
+                    try:
+                        if isinstance(media, InputMediaPhoto):
+                            sent = await bot.send_photo(
+                                chat_id=message.chat.id,
+                                photo=media.media,
+                                caption=media.caption,
+                            )
+                        elif isinstance(media, InputMediaVideo):
+                            sent = await bot.send_video(
+                                chat_id=message.chat.id,
+                                video=media.media,
+                                caption=media.caption,
+                                thumb=media.thumb,
+                                width=media.width,
+                                height=media.height,
+                                supports_streaming=True,
+                            )
+                        elif isinstance(media, InputMediaDocument):
+                            sent = await bot.send_document(
+                                chat_id=message.chat.id,
+                                document=media.media,
+                                caption=media.caption,
+                                thumb=media.thumb if hasattr(media, "thumb") else None,
+                            )
+                        elif isinstance(media, InputMediaAudio):
+                            sent = await bot.send_audio(
+                                chat_id=message.chat.id,
+                                audio=media.media,
+                                caption=media.caption,
+                            )
+                        sent_messages.append(sent)
+                        group_sent_messages.append(sent)
+                    except Exception as individual_e:
+                        await message.reply(f"Failed to upload media: {individual_e}")
+
+            await asyncio.sleep(2)
+
+    # SEND ANIMATIONS INDIVIDUALLY AFTER ALL GROUPS
+    if animation_media:
+        await loading.edit(f"📤 **__Sending {len(animation_media)} GIF(s)…__**")
+        for anim in animation_media:
+            try:
+                sent = await bot.send_animation(
+                    chat_id=message.chat.id,
+                    animation=anim.media,
+                    caption=anim.caption,
+                )
+                animation_sent_messages.append(sent)
+                sent_messages.append(sent)
+                LOGGER(__name__).info("Sent animation separately")
+            except Exception as e:
+                await message.reply(f"Failed to upload animation: {e}")
+            await asyncio.sleep(1)
+
+    # FORWARD TO ADDITIONAL CHAT IF REQUESTED
+    if effective_forward_chat_id and sent_messages:
+        source_chat_id = sent_messages[0].chat.id
+        try:
+            # FORWARD MEDIA GROUPS USING copy_media_group
+            if group_sent_messages:
+                # SPLIT group_sent_messages BACK INTO CHUNKS OF 10 FOR FORWARDING
+                group_chunks = [group_sent_messages[i:i+10] for i in range(0, len(group_sent_messages), 10)]
+                for chunk in group_chunks:
+                    for attempt in range(2):
+                        try:
+                            await bot.copy_media_group(
+                                chat_id=effective_forward_chat_id,
+                                from_chat_id=source_chat_id,
+                                message_id=chunk[0].id,
+                            )
+                            LOGGER(__name__).info(f"Copied media group chunk to chat: {effective_forward_chat_id}")
+                            break
+                        except FloodWait as e:
+                            wait_s = int(getattr(e, "value", 0) or 0)
+                            LOGGER(__name__).warning(f"FloodWait while copying group: {wait_s}s")
+                            if wait_s > 0 and attempt == 0:
+                                await asyncio.sleep(wait_s + 1)
+                                continue
+                            raise
+                    await asyncio.sleep(2)
+
+            # FORWARD ANIMATIONS INDIVIDUALLY USING copy_message
+            for anim_msg in animation_sent_messages:
+                for attempt in range(2):
+                    try:
+                        await bot.copy_message(
+                            chat_id=effective_forward_chat_id,
+                            from_chat_id=source_chat_id,
+                            message_id=anim_msg.id,
+                        )
+                        LOGGER(__name__).info(f"Copied animation to chat: {effective_forward_chat_id}")
+                        break
+                    except FloodWait as e:
+                        wait_s = int(getattr(e, "value", 0) or 0)
+                        LOGGER(__name__).warning(f"FloodWait while copying animation: {wait_s}s")
+                        if wait_s > 0 and attempt == 0:
+                            await asyncio.sleep(wait_s + 1)
+                            continue
+                        raise
+                await asyncio.sleep(1)
+
+        except Exception as e:
+            LOGGER(__name__).error(f"Failed to forward to {effective_forward_chat_id}: {e}")
+
+    # CLEAN UP NOTICE AND LOADING MESSAGES
+    if anim_notice:
+        await anim_notice.delete()
+    await loading.delete()
+
+    # FINAL SUMMARY
+    await message.reply(
+        "**✅ Batch Group Process Complete!**\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        f"📤 **Sent as group** : `{len(group_sent_messages)}` file(s)\n"
+        f"🎞️ **GIFs sent**     : `{len(animation_sent_messages)}` file(s)\n"
+        f"⏭️ **Skipped**       : `{skipped}` (no media/in album)\n"
+        f"❌ **Failed**        : `{failed}` error(s)"
+    )
+
+    for path in temp_paths + thumb_paths:
+        cleanup_download(path)
+
 @bot.on_message(filters.command("dlrange") & filters.private)
-async def download_range(bot: Client, message: Message):
+async def download_range_old(bot: Client, message: Message):
     args = message.text.split()
 
     if len(args) != 3 or not all(arg.startswith("https://t.me/") for arg in args[1:]):
@@ -667,10 +1013,7 @@ async def set_template(client, message):
 async def reset_template_command(client, message):
     reset_template()
     await message.reply("🔄 **Template reset to default (in-memory and file).**")
-
     
-def get_readable_time(seconds: int) -> str:
-    return str(timedelta(seconds=int(seconds)))
 
 @bot.on_message(filters.command("ping"))
 async def ping_command(client, message):
@@ -714,7 +1057,7 @@ async def forward_toggle(client, message):
 
     if action == "on":
         PyroConf.FORWARD_ENABLED = True
-        await message.reply(f"✅ File forwarding **enabled**.\nForwarding to: `{FORWARD_CHAT_ID}`")
+        await message.reply(f"✅ File forwarding **enabled**.\nForwarding to: `{PyroConf.FORWARD_CHAT_ID}`")
     elif action == "off":
         PyroConf.FORWARD_ENABLED = False
         await message.reply("🚫 File forwarding **disabled**.")

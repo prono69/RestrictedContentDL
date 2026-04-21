@@ -19,5 +19,6 @@ COMMANDS = [
     "template",
     "retemp",
     "ping",
-    "forward"
+    "forward",
+    "gdl"
 ]
