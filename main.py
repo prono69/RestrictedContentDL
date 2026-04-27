@@ -356,32 +356,62 @@ async def download_range(bot: Client, message: Message):
 @bot.on_message(filters.command("gdl"))
 async def download_range_group(bot: Client, message: Message):
     global forward_chat_id
+
     args = message.text.split()
+    chat_id = message.chat.id
 
-    if len(args) < 3 or len(args) > 4 or not all(arg.startswith("https://t.me/") for arg in args[1:3]):
-        await message.reply(
-            "🚀 **Batch Download as Group**\n"
-            "`/gdl start_link end_link [forward_chat_id]`\n\n"
-            "💡 **Example:**\n"
-            "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120`\n"
-            "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890`"
-        )
-        return
+    # 👉 If user only sends /gdl → start interactive mode
+    if len(args) == 1:
+        try:
+            start_msg = await bot.ask(
+                chat_id,
+                "🔗 Send **start message link**",
+                timeout=60
+            )
 
+            end_msg = await bot.ask(
+                chat_id,
+                "🔗 Send **end message link**",
+                timeout=60
+            )
+
+            start_link = start_msg.text.strip()
+            end_link = end_msg.text.strip()
+
+            raw_forward_id = forward_chat_id
+
+        except Exception:
+            return await message.reply("❌ Timeout or cancelled.")
+
+    else:
+        # 👉 Normal command usage
+        if len(args) < 3 or len(args) > 4 or not all(arg.startswith("https://t.me/") for arg in args[1:3]):
+            return await message.reply(
+                "🚀 **Batch Download as Group**\n"
+                "`/gdl start_link end_link [forward_chat_id]`\n\n"
+                "💡 **Example:**\n"
+                "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120`\n"
+                "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890`"
+            )
+
+        start_link = args[1]
+        end_link = args[2]
+        raw_forward_id = args[3] if len(args) == 4 else forward_chat_id
+
+    # 👉 Parse links
     try:
-        start_chat, start_id = getChatMsgID(args[1])
-        end_chat,   end_id   = getChatMsgID(args[2])
+        start_chat, start_id = getChatMsgID(start_link)
+        end_chat, end_id = getChatMsgID(end_link)
     except Exception as e:
         return await message.reply(f"**❌ Error parsing links:\n{e}**")
-        
+
     if start_chat != end_chat:
         return await message.reply("**❌ Both links must be from the same channel.**")
+
     if start_id > end_id:
-        return await message.reply("**❌ Invalid range: start ID cannot exceed end ID.**")    
+        return await message.reply("**❌ Invalid range: start ID cannot exceed end ID.**")
 
-    # USE args[3] IF PROVIDED, OTHERWISE FALL BACK TO GLOBAL
-    raw_forward_id = args[3] if len(args) == 4 else forward_chat_id
-
+    # 👉 Forward chat handling
     effective_forward_chat_id = None
     if raw_forward_id:
         ok, err_msg = await check_forward_permission(bot, raw_forward_id)
