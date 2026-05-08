@@ -270,7 +270,7 @@ async def handle_download(bot: Client, message: Message, post_url: str):
         LOGGER(__name__).error(e)
 
 
-@bot.on_message(filters.command("dl"))
+@bot.on_message(filters.command("dl") & filters.user(PyroConf.OWNER_ID))
 async def download_media(bot: Client, message: Message):
     if len(message.command) < 2:
         await message.reply("**Provide a post URL after the /dl command.**")
@@ -280,7 +280,7 @@ async def download_media(bot: Client, message: Message):
     await track_task(handle_download(bot, message, post_url))
 
 
-@bot.on_message(filters.command("bdl"))
+@bot.on_message(filters.command("bdl") & filters.user(PyroConf.OWNER_ID))
 async def download_range(bot: Client, message: Message):
     args = message.text.split()
  
@@ -353,7 +353,7 @@ async def download_range(bot: Client, message: Message):
         f"❌ **Failed**     : `{failed}` error(s)"
     )
 
-@bot.on_message(filters.command("gdl"))
+@bot.on_message(filters.command("gdl") & filters.user(PyroConf.OWNER_ID))
 async def download_range_group(bot: Client, message: Message):
     global forward_chat_id
 
@@ -716,7 +716,7 @@ async def download_range_group(bot: Client, message: Message):
     for path in temp_paths + thumb_paths:
         cleanup_download(path)
 
-@bot.on_message(filters.command("dlrange") & filters.private)
+@bot.on_message(filters.command("dlrange") & filters.private & filters.user(PyroConf.OWNER_ID))
 async def download_range_old(bot: Client, message: Message):
     args = message.text.split()
 
@@ -753,7 +753,7 @@ async def handle_any_message(bot: Client, message: Message):
         await track_task(handle_download(bot, message, message.text))
 
 
-@bot.on_message(filters.command("stats") & filters.private)
+@bot.on_message(filters.command("stats"))
 async def stats(_, message: Message):
     currentTime = get_readable_time(time() - PyroConf.BOT_START_TIME)
     total, used, free = shutil.disk_usage(".")
@@ -783,7 +783,7 @@ async def stats(_, message: Message):
     await message.reply(stats)
 
 
-@bot.on_message(filters.command("logs") & filters.private)
+@bot.on_message(filters.command("logs") & filters.private & filters.user(PyroConf.OWNER_ID))
 async def logs(_, message: Message):
     if os.path.exists("logs.txt"):
         await message.reply_document(document="logs.txt", caption="**Logs**")
@@ -791,7 +791,7 @@ async def logs(_, message: Message):
         await message.reply("**Not exists**")
 
 
-@bot.on_message(filters.command("killall"))
+@bot.on_message(filters.command("killall") & filters.user(PyroConf.OWNER_ID))
 async def cancel_all_tasks(_, message: Message):
     cancelled = 0
     for task in list(RUNNING_TASKS):
