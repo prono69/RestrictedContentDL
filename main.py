@@ -375,8 +375,15 @@ async def download_range_group(bot: Client, message: Message):
                 timeout=60
             )
 
+            stream_msg = await bot.ask(
+                chat_id,
+                "📡 Send `s` to force streamable sending, or anything else to skip.",
+                timeout=60
+            )
+
             start_link = start_msg.text.strip()
             end_link = end_msg.text.strip()
+            force_stream = stream_msg.text.strip().lower() == "s"
 
             raw_forward_id = forward_chat_id
 
@@ -385,18 +392,35 @@ async def download_range_group(bot: Client, message: Message):
 
     else:
         # 👉 Normal command usage
-        if len(args) < 3 or len(args) > 4 or not all(arg.startswith("https://t.me/") for arg in args[1:3]):
+        # Extract optional flags: forward_chat_id and/or "s"
+        # Valid forms:
+        #   /gdl start end
+        #   /gdl start end s
+        #   /gdl start end -100xxx
+        #   /gdl start end -100xxx s
+
+        if len(args) < 3 or not all(arg.startswith("https://t.me/") for arg in args[1:3]):
             return await message.reply(
                 "🚀 **Batch Download as Group**\n"
-                "`/gdl start_link end_link [forward_chat_id]`\n\n"
+                "`/gdl start_link end_link [forward_chat_id] [s]`\n\n"
                 "💡 **Example:**\n"
                 "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120`\n"
-                "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890`"
+                "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 s`\n"
+                "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890`\n"
+                "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890 s`\n\n"
+                "📡 Add `s` to force documents to be sent as streamable photo/video."
             )
+
+        # Parse remaining args after the two links
+        remaining = args[3:]
+        force_stream = "s" in [r.lower() for r in remaining]
+        raw_forward_id = next(
+            (r for r in remaining if r.lower() != "s"),
+            forward_chat_id
+        )
 
         start_link = args[1]
         end_link = args[2]
-        raw_forward_id = args[3] if len(args) == 4 else forward_chat_id
 
     # 👉 Parse links
     try:
@@ -428,7 +452,10 @@ async def download_range_group(bot: Client, message: Message):
     except Exception:
         pass
 
-    loading = await message.reply(f"📥 **__Fetching posts {start_id}–{end_id}…__**")
+    loading = await message.reply(
+        f"📥 **__Fetching posts {start_id}–{end_id}…__**"
+        + (" `[stream mode]`" if force_stream else "")
+    )
 
     # COLLECT ALL MEDIA AND ANIMATIONS SEPARATELY
     valid_media = []       # compatible media for group sending
@@ -507,35 +534,91 @@ async def download_range_group(bot: Client, message: Message):
                         )
                     )
                 elif chat_msg.document:
-                    thumb = None
-                    width, height = 320, 320
+                    mime = getattr(chat_msg.document, "mime_type", "") or ""
 
-                    thumb_filename = f"bdlg_doc_thumb_{int(time())}.jpg"
-                    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+                    # ── STREAM MODE: re-cast document as photo or video ──
+                    if force_stream and mime.startswith("image/"):
+                        valid_media.append(
+                            InputMediaPhoto(media=media_path, caption=caption)
+                        )
 
-                    if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
-                        try:
-                            thumb = await user.download_media(
-                                chat_msg.document.thumbs[0].file_id,
-                                file_name=custom_thumb_path
-                            )
-                            if thumb and os.path.exists(thumb):
+                    elif force_stream and mime.startswith("video/"):
+                        duration = (await get_media_info(media_path))[0]
+                        thumb = None
+                        width = 480
+                        height = 320
+
+                        thumb_filename = f"bdlg_thumb_{int(time())}.jpg"
+                        custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                        if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
+                            try:
+                                thumb = await user.download_media(
+                                    chat_msg.document.thumbs[0].file_id,
+                                    file_name=custom_thumb_path
+                                )
+                                if thumb and os.path.exists(thumb):
+                                    with Image.open(thumb) as img:
+                                        width, height = img.size
+                                    thumb_paths.append(thumb)
+                                else:
+                                    thumb = None
+                            except Exception as e:
+                                LOGGER(__name__).warning(f"Failed to download doc-video thumbnail: {e}")
+                                thumb = None
+
+                        if thumb is None:
+                            thumb = await get_video_thumbnail(media_path, duration)
+                            if thumb and thumb != "none":
                                 with Image.open(thumb) as img:
                                     width, height = img.size
                                 thumb_paths.append(thumb)
-                            else:
+                            elif thumb == "none":
                                 thumb = None
-                        except Exception as e:
-                            LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
-                            thumb = None
 
-                    valid_media.append(
-                        InputMediaDocument(
-                            media=media_path,
-                            caption=caption,
-                            thumb=thumb
+                        valid_media.append(
+                            InputMediaVideo(
+                                media=media_path,
+                                caption=caption,
+                                duration=duration,
+                                thumb=thumb,
+                                width=width,
+                                height=height
+                            )
                         )
-                    )
+
+                    else:
+                        # ── DEFAULT: send as document ──
+                        thumb = None
+                        width, height = 320, 320
+
+                        thumb_filename = f"bdlg_doc_thumb_{int(time())}.jpg"
+                        custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                        if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
+                            try:
+                                thumb = await user.download_media(
+                                    chat_msg.document.thumbs[0].file_id,
+                                    file_name=custom_thumb_path
+                                )
+                                if thumb and os.path.exists(thumb):
+                                    with Image.open(thumb) as img:
+                                        width, height = img.size
+                                    thumb_paths.append(thumb)
+                                else:
+                                    thumb = None
+                            except Exception as e:
+                                LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
+                                thumb = None
+
+                        valid_media.append(
+                            InputMediaDocument(
+                                media=media_path,
+                                caption=caption,
+                                thumb=thumb
+                            )
+                        )
+
                 elif chat_msg.audio:
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
@@ -710,11 +793,13 @@ async def download_range_group(bot: Client, message: Message):
         f"📤 **Sent as group** : `{len(group_sent_messages)}` file(s)\n"
         f"🎞️ **GIFs sent**     : `{len(animation_sent_messages)}` file(s)\n"
         f"⏭️ **Skipped**       : `{skipped}` (no media/in album)\n"
-        f"❌ **Failed**        : `{failed}` error(s)"
+        f"❌ **Failed**        : `{failed}` error(s)\n"
+        + (f"📡 **Stream mode**   : `on`" if force_stream else "")
     )
 
     for path in temp_paths + thumb_paths:
         cleanup_download(path)
+
 
 @bot.on_message(filters.command("dlrange") & filters.private & filters.user(PyroConf.OWNER_ID))
 async def download_range_old(bot: Client, message: Message):
