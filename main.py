@@ -149,12 +149,12 @@ async def help_command(_, message: Message):
     await message.reply(help_text, reply_markup=markup, disable_web_page_preview=True)
 
 
-async def handle_download(bot: Client, message: Message, post_url: str):
+async def handle_download(bot: Client, message: Message, post_url: str, force_stream: bool = False):
     global forward_chat_id
     # Cut off URL at '?' if present
     if "?" in post_url:
         post_url = post_url.split("?", 1)[0]
- 
+
     try:
         effective_forward_chat_id = None
         if forward_chat_id:
@@ -163,22 +163,22 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 await message.reply(f"⚠️ **Forward chat misconfigured:** {err_msg}\n\n""The file will be sent to you only.")
             else:
                 effective_forward_chat_id = forward_chat_id if PyroConf.FORWARD_ENABLED else None
+
         # Special handling for t.me/b/ links
         if 't.me/b/' in post_url:
-            parts = [p for p in post_url.split("/") if p]  # Split and remove empty parts
+            parts = [p for p in post_url.split("/") if p]
             if len(parts) >= 5 and parts[2] == 'b':
                 chat_id = str(parts[3])
                 message_id = int(parts[4])
             else:
                 raise ValueError("Invalid business link format")
         else:
-            # Normal processing for other links
             chat_id, message_id = getChatMsgID(post_url)
-            
+
         chat_message = await user.get_messages(chat_id=chat_id, message_ids=message_id)
- 
+
         LOGGER(__name__).info(f"Downloading media from URL: {post_url}")
- 
+
         if chat_message.document or chat_message.video or chat_message.audio:
             file_size = (
                 chat_message.document.file_size
@@ -187,33 +187,37 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 if chat_message.video
                 else chat_message.audio.file_size
             )
- 
+
             if not await fileSizeLimit(
                 file_size, message, "download", user.me.is_premium
             ):
                 return
- 
+
         parsed_caption = await get_parsed_msg(
             chat_message.caption or "", chat_message.caption_entities
         )
         parsed_text = await get_parsed_msg(
             chat_message.text or "", chat_message.entities
         )
- 
+
         if chat_message.media_group_id:
-            if not await processMediaGroup(chat_message, bot, message, user, forward_chat_id=effective_forward_chat_id):
+            if not await processMediaGroup(
+                chat_message, bot, message, user,
+                forward_chat_id=effective_forward_chat_id,
+                force_stream=force_stream
+            ):
                 await message.reply(
                     "**Could not extract any valid media from the media group.**"
                 )
             return
- 
+
         elif chat_message.media:
             start_time = time()
             progress_message = await message.reply("**__📥 Downloading Progress...__**")
- 
+
             filename = get_file_name(message_id, chat_message)
             download_path = get_download_path(message.id, filename)
- 
+
             media_path = await chat_message.download(
                 file_name=download_path,
                 progress=Leaves.progress_for_pyrogram,
@@ -221,9 +225,9 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                     "📥 **__Downloading Progress__**", progress_message, start_time
                 ),
             )
- 
+
             LOGGER(__name__).info(f"Downloaded media: {media_path}")
- 
+
             media_type = (
                 "photo"
                 if chat_message.photo
@@ -246,22 +250,23 @@ async def handle_download(bot: Client, message: Message, post_url: str):
                 progress_message,
                 start_time,
                 forward_chat_id=effective_forward_chat_id
+                # NOTE: force_stream not passed here yet — send_media to be updated later
             )
- 
+
             cleanup_download(media_path)
             await progress_message.delete()
- 
+
         elif chat_message.text or chat_message.caption:
             await message.reply(parsed_text or parsed_caption)
         else:
             await message.reply("**No media or text found in the post URL.**")
-            
+
     except FloodWait as e:
         wait_s = int(getattr(e, "value", 0) or 0)
         LOGGER(__name__).warning(f"FloodWait in handle_download: {wait_s}s")
         if wait_s > 0:
             await asyncio.sleep(wait_s + 1)
-        return   
+        return
     except (PeerIdInvalid, BadRequest, KeyError):
         await message.reply("**Make sure the user client is part of the chat.**")
     except Exception as e:
@@ -835,7 +840,16 @@ async def download_range_old(bot: Client, message: Message):
 @bot.on_message(filters.private & ~filters.command(COMMANDS))
 async def handle_any_message(bot: Client, message: Message):
     if message.text and not message.text.startswith("/"):
-        await track_task(handle_download(bot, message, message.text))
+        parts = message.text.strip().split()
+        # CHECK IF LAST WORD IS "s" FLAG
+        if len(parts) >= 2 and parts[-1].lower() == "s":
+            post_url = parts[0]
+            force_stream = True
+        else:
+            post_url = parts[0]
+            force_stream = False
+        await track_task(handle_download(bot, message, post_url, force_stream=force_stream))
+
 
 
 @bot.on_message(filters.command("stats"))

@@ -339,7 +339,7 @@ async def send_media(
                 break
         
 
-async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=None):
+async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=None, force_stream: bool = False):
     media_group_messages = await chat_message.get_media_group()
     valid_media = []
     animation_media = []  # SEPARATE LIST FOR ANIMATIONS
@@ -411,36 +411,93 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                         )
                     )
                 elif msg.document:
-                    thumb = None
-                    width, height = 320, 320
+                    mime = getattr(msg.document, "mime_type", "") or ""
 
-                    thumb_filename = f"group_doc_thumb_{int(time())}.jpg"
-                    custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+                    # ── STREAM MODE: re-cast document as photo or video ──
+                    if force_stream and mime.startswith("image/"):
+                        valid_media.append(
+                            InputMediaPhoto(media=media_path, caption=caption)
+                        )
 
-                    if hasattr(msg.document, 'thumbs') and msg.document.thumbs:
-                        try:
-                            thumb = await user.download_media(
-                                msg.document.thumbs[0].file_id,
-                                file_name=custom_thumb_path
-                            )
-                            if thumb and os.path.exists(thumb):
+                    elif force_stream and mime.startswith("video/"):
+                        duration = (await get_media_info(media_path))[0]
+                        thumb = None
+                        width = 480
+                        height = 320
+
+                        thumb_filename = f"group_thumb_{int(time())}.jpg"
+                        custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                        if hasattr(msg.document, 'thumbs') and msg.document.thumbs:
+                            try:
+                                thumb = await user.download_media(
+                                    msg.document.thumbs[0].file_id,
+                                    file_name=custom_thumb_path
+                                )
+                                if thumb and os.path.exists(thumb):
+                                    with Image.open(thumb) as img:
+                                        width, height = img.size
+                                    thumb_paths.append(thumb)
+                                    LOGGER(__name__).info("Using existing Telegram thumbnail for doc-video (stream mode)")
+                                else:
+                                    thumb = None
+                            except Exception as e:
+                                LOGGER(__name__).warning(f"Failed to download doc-video thumbnail: {e}")
+                                thumb = None
+
+                        if thumb is None:
+                            thumb = await get_video_thumbnail(media_path, duration)
+                            if thumb and thumb != "none":
                                 with Image.open(thumb) as img:
                                     width, height = img.size
                                 thumb_paths.append(thumb)
-                                LOGGER(__name__).info("Using existing Telegram thumbnail for document")
-                            else:
+                            elif thumb == "none":
                                 thumb = None
-                        except Exception as e:
-                            LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
-                            thumb = None
 
-                    valid_media.append(
-                        InputMediaDocument(
-                            media=media_path,
-                            caption=caption,
-                            thumb=thumb
+                        valid_media.append(
+                            InputMediaVideo(
+                                media=media_path,
+                                caption=caption,
+                                duration=duration,
+                                thumb=thumb,
+                                width=width,
+                                height=height
+                            )
                         )
-                    )
+
+                    else:
+                        # ── DEFAULT: send as document ──
+                        thumb = None
+                        width, height = 320, 320
+
+                        thumb_filename = f"group_doc_thumb_{int(time())}.jpg"
+                        custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
+
+                        if hasattr(msg.document, 'thumbs') and msg.document.thumbs:
+                            try:
+                                thumb = await user.download_media(
+                                    msg.document.thumbs[0].file_id,
+                                    file_name=custom_thumb_path
+                                )
+                                if thumb and os.path.exists(thumb):
+                                    with Image.open(thumb) as img:
+                                        width, height = img.size
+                                    thumb_paths.append(thumb)
+                                    LOGGER(__name__).info("Using existing Telegram thumbnail for document")
+                                else:
+                                    thumb = None
+                            except Exception as e:
+                                LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
+                                thumb = None
+
+                        valid_media.append(
+                            InputMediaDocument(
+                                media=media_path,
+                                caption=caption,
+                                thumb=thumb
+                            )
+                        )
+
                 elif msg.audio:
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
@@ -524,7 +581,7 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             caption=media.caption,
                         )
                     sent_messages.append(sent)
-                    group_sent_messages.append(sent)  # TRACK FOR FORWARDING
+                    group_sent_messages.append(sent)
                 except Exception as individual_e:
                     await message.reply(
                         f"Failed to upload individual media: {individual_e}"
@@ -590,13 +647,14 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
 
         except Exception as e:
             LOGGER(__name__).error(f"Failed to forward to {forward_chat_id}: {e}")
-    
+
     if anim_notice:
         await anim_notice.delete()
-    
+
     for path in temp_paths + invalid_paths + thumb_paths:
         cleanup_download(path)
     return True
+
     
     
 def json_parser(data: Any, indent: Union[int, None] = None, ensure_ascii: bool = False) -> Any:
