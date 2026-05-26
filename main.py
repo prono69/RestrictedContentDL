@@ -282,7 +282,8 @@ async def download_media(bot: Client, message: Message):
         return
 
     post_url = message.command[1]
-    await track_task(handle_download(bot, message, post_url))
+    force_stream = len(message.command) >= 3 and message.command[2].lower() == "s"
+    await track_task(handle_download(bot, message, post_url, force_stream=force_stream))
 
 
 @bot.on_message(filters.command("bdl") & filters.user(PyroConf.OWNER_ID))
