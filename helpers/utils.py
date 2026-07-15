@@ -192,7 +192,8 @@ def progressArgs(action: str, progress_message, start_time):
 
 async def send_media(
     bot, message, chat_message, user, media_path, media_type, caption, progress_message, start_time,
-    forward_chat_id=None  # NEW ARGUMENT
+    forward_chat_id=None,
+    force_stream: bool = False
 ):
     file_size = os.path.getsize(media_path)
 
@@ -201,7 +202,7 @@ async def send_media(
 
     progress_args = progressArgs("📥 Uploading Progress", progress_message, start_time)
     LOGGER(__name__).info(f"Uploading media: {media_path} ({media_type})")
-    
+
     # Generate unique filename for the thumbnail
     thumb_filename = f"thumb_{int(time())}.jpg"
     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
@@ -240,7 +241,7 @@ async def send_media(
                     os.remove(custom_thumb_path)
                 thumb = None
 
-        # 2. IF NO EXISTING THUMBNAIL, GENERATE ONE (ORIGINAL BEHAVIOR)
+        # 2. IF NO EXISTING THUMBNAIL, GENERATE ONE
         if thumb is None:
             thumb = await get_video_thumbnail(media_path, duration)
             if thumb is not None and thumb != "none":
@@ -275,38 +276,100 @@ async def send_media(
             progress=Leaves.progress_for_pyrogram,
             progress_args=progress_args,
         )
-    elif media_type == "document":
-        thumb = None
-        width, height = 320, 320
 
-        # 1. Try existing Telegram thumbnail
-        if hasattr(chat_message.document, 'thumbs') and chat_message.document.thumbs:
-            try:
-                thumb = await user.download_media(
-                    chat_message.document.thumbs[0].file_id,
-                    file_name=custom_thumb_path
-                )
-                if thumb and os.path.exists(thumb):
+    elif media_type == "document":
+        mime = getattr(chat_message.document, "mime_type", "") or ""
+
+        # ── STREAM MODE: re-cast document as photo or video ──
+        if force_stream and mime.startswith("image/"):
+            LOGGER(__name__).info(f"Stream mode: sending document as photo (mime: {mime})")
+            sent_message = await message.reply_photo(
+                media_path,
+                caption=caption or "",
+                progress=Leaves.progress_for_pyrogram,
+                progress_args=progress_args,
+            )
+
+        elif force_stream and mime.startswith("video/"):
+            LOGGER(__name__).info(f"Stream mode: sending document as video (mime: {mime})")
+            duration = (await get_media_info(media_path))[0]
+            thumb = None
+            width = 480
+            height = 320
+
+            if hasattr(chat_message.document, 'thumbs') and chat_message.document.thumbs:
+                try:
+                    thumb = await user.download_media(
+                        chat_message.document.thumbs[0].file_id,
+                        file_name=custom_thumb_path
+                    )
+                    if thumb and os.path.exists(thumb):
+                        with Image.open(thumb) as img:
+                            width, height = img.size
+                        LOGGER(__name__).info(f"Using existing Telegram thumbnail for doc-video: {thumb}")
+                    else:
+                        thumb = None
+                except Exception as e:
+                    LOGGER(__name__).warning(f"Failed to download doc-video thumbnail: {e}")
+                    if os.path.exists(custom_thumb_path):
+                        os.remove(custom_thumb_path)
+                    thumb = None
+
+            if thumb is None:
+                thumb = await get_video_thumbnail(media_path, duration)
+                if thumb is not None and thumb != "none":
                     with Image.open(thumb) as img:
                         width, height = img.size
-                    LOGGER(__name__).info(f"Using existing Telegram document thumbnail: {thumb} {width}, {height}")
-                else:
+                elif thumb == "none":
                     thumb = None
-            except Exception as e:
-                LOGGER(__name__).warning(f"Failed to download Telegram document thumbnail: {e}")
-                if os.path.exists(custom_thumb_path):
-                    os.remove(custom_thumb_path)
-                thumb = None
+                LOGGER(__name__).info("Generated new thumbnail for doc-video")
 
-        sent_message = await message.reply_document(
-            media_path,
-            caption=caption or "",
-            thumb=thumb,
-            progress=Leaves.progress_for_pyrogram,
-            progress_args=progress_args,
-        )
-        if thumb and os.path.exists(thumb):
-            os.remove(thumb)
+            sent_message = await message.reply_video(
+                media_path,
+                duration=duration,
+                width=width,
+                height=height,
+                thumb=thumb,
+                caption=caption or "",
+                supports_streaming=True,
+                progress=Leaves.progress_for_pyrogram,
+                progress_args=progress_args,
+            )
+            if thumb and os.path.exists(thumb):
+                os.remove(thumb)
+
+        else:
+            # ── DEFAULT: send as document ──
+            thumb = None
+            width, height = 320, 320
+
+            if hasattr(chat_message.document, 'thumbs') and chat_message.document.thumbs:
+                try:
+                    thumb = await user.download_media(
+                        chat_message.document.thumbs[0].file_id,
+                        file_name=custom_thumb_path
+                    )
+                    if thumb and os.path.exists(thumb):
+                        with Image.open(thumb) as img:
+                            width, height = img.size
+                        LOGGER(__name__).info(f"Using existing Telegram document thumbnail: {thumb} {width}, {height}")
+                    else:
+                        thumb = None
+                except Exception as e:
+                    LOGGER(__name__).warning(f"Failed to download Telegram document thumbnail: {e}")
+                    if os.path.exists(custom_thumb_path):
+                        os.remove(custom_thumb_path)
+                    thumb = None
+
+            sent_message = await message.reply_document(
+                media_path,
+                caption=caption or "",
+                thumb=thumb,
+                progress=Leaves.progress_for_pyrogram,
+                progress_args=progress_args,
+            )
+            if thumb and os.path.exists(thumb):
+                os.remove(thumb)
 
     elif media_type == "animation":
         sent_message = await message.reply_animation(

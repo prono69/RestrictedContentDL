@@ -249,7 +249,8 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                 parsed_caption,
                 progress_message,
                 start_time,
-                forward_chat_id=effective_forward_chat_id
+                forward_chat_id=effective_forward_chat_id,
+                force_stream=force_stream
                 # NOTE: force_stream not passed here yet — send_media to be updated later
             )
 
