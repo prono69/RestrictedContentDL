@@ -20,5 +20,7 @@ COMMANDS = [
     "retemp",
     "ping",
     "forward",
-    "gdl"
+    "gdl",
+    "sdl",
+    "mdl"
 ]
