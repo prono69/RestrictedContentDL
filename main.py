@@ -28,6 +28,7 @@ from pyrogram.types import (
     InputMediaAnimation,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    LinkPreviewOptions
     Message,
 )
  
@@ -117,7 +118,7 @@ async def start(_, message: Message):
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Update Channel", url="https://t.me/itsSmartDev")]]
     )
-    await message.reply(welcome_text, reply_markup=markup, disable_web_page_preview=True)
+    await message.reply(welcome_text, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
  
 @bot.on_message(filters.command("help") & filters.private)
 async def help_command(_, message: Message):
@@ -147,7 +148,7 @@ async def help_command(_, message: Message):
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Update Channel", url="https://t.me/itsSmartDev")]]
     )
-    await message.reply(help_text, reply_markup=markup, disable_web_page_preview=True)
+    await message.reply(help_text, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
  
  
 async def handle_download(bot: Client, message: Message, post_url: str, force_stream: bool = False):
