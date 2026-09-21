@@ -1,6 +1,6 @@
 # Copyright (C) @TheSmartBisnu
 # Channel: https://t.me/itsSmartDev
-
+ 
 import os
 import io
 from io import BytesIO
@@ -15,7 +15,7 @@ from time import time
 from PIL import Image
 from datetime import timedelta
 from pprint import pformat  # For pretty-printing
-
+ 
 from pyleaves import Leaves
 from pyrogram.enums import ParseMode
 from pyrogram import Client, filters
@@ -30,9 +30,9 @@ from pyrogram.types import (
     InlineKeyboardButton,
     Message,
 )
-
+ 
 from helpers.forward import check_forward_permission, resolve_forward_chat_id
-
+ 
 from helpers.utils import (
     processMediaGroup,
     progressArgs,
@@ -46,7 +46,7 @@ from helpers.utils import (
     get_video_thumbnail,
     CUSTOM_THUMB_DIR
 )
-
+ 
 from helpers.files import (
     get_download_path,
     fileSizeLimit,
@@ -54,38 +54,37 @@ from helpers.files import (
     get_readable_time,
     cleanup_download
 )
-
+ 
 from helpers.msg import (
     getChatMsgID,
     get_file_name,
     get_parsed_msg
 )
-
+ 
 from config import PyroConf
 from logger import LOGGER
 from cmd_list import COMMANDS
-
+ 
 START_TIME = time()
-
+ 
 # Initialize the bot client
 bot = Client(
     "media_bot",
     api_id=PyroConf.API_ID,
     api_hash=PyroConf.API_HASH,
     bot_token=PyroConf.BOT_TOKEN,
-    workers=1000,
-    in_memory=True
+    workers=1000
 )
-
+ 
 # Client for user session
-user = Client("user_session", workers=1000, session_string=PyroConf.SESSION_STRING, in_memory=True)
-
+user = Client("user_session", workers=1000, session_string=PyroConf.SESSION_STRING)
+ 
 RUNNING_TASKS = set()
-
+ 
 MAX_MESSAGE_LENGTH = 4096
 EVAL_TIMEOUT = 60  # Timeout in seconds
 eval_history = []
-
+ 
 COMMAND_TIMEOUT = 60  # Timeout in seconds
 COMMAND_ALIASES = {
     "update": "git pull",
@@ -93,7 +92,7 @@ COMMAND_ALIASES = {
 }
 command_history = []
 forward_chat_id = None
-
+ 
 def track_task(coro):
     task = asyncio.create_task(coro)
     RUNNING_TASKS.add(task)
@@ -101,7 +100,7 @@ def track_task(coro):
         RUNNING_TASKS.discard(task)
     task.add_done_callback(_remove)
     return task
-
+ 
 @bot.on_message(filters.command("start") & filters.private)
 async def start(_, message: Message):
     welcome_text = (
@@ -113,12 +112,12 @@ async def start(_, message: Message):
         "🔒 Make sure the user client is part of the chat.\n\n"
         "Ready? Send me a Telegram post link!"
     )
-
+ 
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Update Channel", url="https://t.me/itsSmartDev")]]
     )
     await message.reply(welcome_text, reply_markup=markup, disable_web_page_preview=True)
-
+ 
 @bot.on_message(filters.command("help") & filters.private)
 async def help_command(_, message: Message):
     help_text = (
@@ -148,14 +147,14 @@ async def help_command(_, message: Message):
         [[InlineKeyboardButton("Update Channel", url="https://t.me/itsSmartDev")]]
     )
     await message.reply(help_text, reply_markup=markup, disable_web_page_preview=True)
-
-
+ 
+ 
 async def handle_download(bot: Client, message: Message, post_url: str, force_stream: bool = False):
     global forward_chat_id
     # Cut off URL at '?' if present
     if "?" in post_url:
         post_url = post_url.split("?", 1)[0]
-
+ 
     try:
         effective_forward_chat_id = None
         if forward_chat_id:
@@ -164,7 +163,7 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                 await message.reply(f"⚠️ **Forward chat misconfigured:** {err_msg}\n\n""The file will be sent to you only.")
             else:
                 effective_forward_chat_id = forward_chat_id if PyroConf.FORWARD_ENABLED else None
-
+ 
         # Special handling for t.me/b/ links
         if 't.me/b/' in post_url:
             parts = [p for p in post_url.split("/") if p]
@@ -175,11 +174,11 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                 raise ValueError("Invalid business link format")
         else:
             chat_id, message_id = getChatMsgID(post_url)
-
+ 
         chat_message = await user.get_messages(chat_id=chat_id, message_ids=message_id)
-
+ 
         LOGGER(__name__).info(f"Downloading media from URL: {post_url}")
-
+ 
         if chat_message.document or chat_message.video or chat_message.audio:
             file_size = (
                 chat_message.document.file_size
@@ -188,19 +187,19 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                 if chat_message.video
                 else chat_message.audio.file_size
             )
-
+ 
             if not await fileSizeLimit(
                 file_size, message, "download", user.me.is_premium
             ):
                 return
-
+ 
         parsed_caption = await get_parsed_msg(
             chat_message.caption or "", chat_message.caption_entities
         )
         parsed_text = await get_parsed_msg(
             chat_message.text or "", chat_message.entities
         )
-
+ 
         if chat_message.media_group_id:
             if not await processMediaGroup(
                 chat_message, bot, message, user,
@@ -211,14 +210,14 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                     "**Could not extract any valid media from the media group.**"
                 )
             return
-
+ 
         elif chat_message.media:
             start_time = time()
             progress_message = await message.reply("**__📥 Downloading Progress...__**")
-
+ 
             filename = get_file_name(message_id, chat_message)
             download_path = get_download_path(message.id, filename)
-
+ 
             media_path = await chat_message.download(
                 file_name=download_path,
                 progress=Leaves.progress_for_pyrogram,
@@ -226,9 +225,9 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                     "📥 **__Downloading Progress__**", progress_message, start_time
                 ),
             )
-
+ 
             LOGGER(__name__).info(f"Downloaded media: {media_path}")
-
+ 
             media_type = (
                 "photo"
                 if chat_message.photo
@@ -254,15 +253,15 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
                 force_stream=force_stream
                 # NOTE: force_stream not passed here yet — send_media to be updated later
             )
-
+ 
             cleanup_download(media_path)
             await progress_message.delete()
-
+ 
         elif chat_message.text or chat_message.caption:
             await message.reply(parsed_text or parsed_caption)
         else:
             await message.reply("**No media or text found in the post URL.**")
-
+ 
     except FloodWait as e:
         wait_s = int(getattr(e, "value", 0) or 0)
         LOGGER(__name__).warning(f"FloodWait in handle_download: {wait_s}s")
@@ -275,33 +274,33 @@ async def handle_download(bot: Client, message: Message, post_url: str, force_st
         error_message = f"**❌ {str(e)}**"
         await message.reply(error_message)
         LOGGER(__name__).error(e)
-
-
+ 
+ 
 @bot.on_message(filters.command("dl") & filters.user(PyroConf.OWNER_ID))
 async def download_media(bot: Client, message: Message):
     if len(message.command) < 2:
         await message.reply("**Provide a post URL after the /dl command.**")
         return
-
+ 
     parts = message.command[1:]
-
+ 
     # CHECK IF LAST PART IS "s" FLAG
     if parts and parts[-1].lower() == "s":
         force_stream = True
         parts = parts[:-1]
     else:
         force_stream = False
-
+ 
     links = [p for p in parts if p.startswith("https://t.me/")]
-
+ 
     if not links:
         return await message.reply("**No valid t.me links found.**")
-
+ 
     for url in links:
         await track_task(handle_download(bot, message, url, force_stream=force_stream))
         await asyncio.sleep(3)
-
-
+ 
+ 
 @bot.on_message(filters.command("bdl") & filters.user(PyroConf.OWNER_ID))
 async def download_range(bot: Client, message: Message):
     args = message.text.split()
@@ -376,14 +375,14 @@ async def download_range(bot: Client, message: Message):
         f"⏭️ **Skipped**    : `{skipped}` (no content)\n"
         f"❌ **Failed**     : `{failed}` error(s)"
     )
-
+ 
 @bot.on_message(filters.command("gdl") & filters.user(PyroConf.OWNER_ID))
 async def download_range_group(bot: Client, message: Message):
     global forward_chat_id
-
+ 
     args = message.text.split()
     chat_id = message.chat.id
-
+ 
     # 👉 If user only sends /gdl → start interactive mode
     if len(args) == 1:
         try:
@@ -392,28 +391,28 @@ async def download_range_group(bot: Client, message: Message):
                 "🔗 Send **start message link**",
                 timeout=60
             )
-
+ 
             end_msg = await bot.ask(
                 chat_id,
                 "🔗 Send **end message link**",
                 timeout=60
             )
-
+ 
             stream_msg = await bot.ask(
                 chat_id,
                 "📡 Send `s` to force streamable sending, or anything else to skip.",
                 timeout=60
             )
-
+ 
             start_link = start_msg.text.strip()
             end_link = end_msg.text.strip()
             force_stream = stream_msg.text.strip().lower() == "s"
-
+ 
             raw_forward_id = forward_chat_id
-
+ 
         except Exception:
             return await message.reply("❌ Timeout or cancelled.")
-
+ 
     else:
         # 👉 Normal command usage
         # Extract optional flags: forward_chat_id and/or "s"
@@ -422,7 +421,7 @@ async def download_range_group(bot: Client, message: Message):
         #   /gdl start end s
         #   /gdl start end -100xxx
         #   /gdl start end -100xxx s
-
+ 
         if len(args) < 3 or not all(arg.startswith("https://t.me/") for arg in args[1:3]):
             return await message.reply(
                 "🚀 **Batch Download as Group**\n"
@@ -434,7 +433,7 @@ async def download_range_group(bot: Client, message: Message):
                 "`/gdl https://t.me/mychannel/100 https://t.me/mychannel/120 -1001234567890 s`\n\n"
                 "📡 Add `s` to force documents to be sent as streamable photo/video."
             )
-
+ 
         # Parse remaining args after the two links
         remaining = args[3:]
         force_stream = "s" in [r.lower() for r in remaining]
@@ -442,23 +441,23 @@ async def download_range_group(bot: Client, message: Message):
             (r for r in remaining if r.lower() != "s"),
             forward_chat_id
         )
-
+ 
         start_link = args[1]
         end_link = args[2]
-
+ 
     # 👉 Parse links
     try:
         start_chat, start_id = getChatMsgID(start_link)
         end_chat, end_id = getChatMsgID(end_link)
     except Exception as e:
         return await message.reply(f"**❌ Error parsing links:\n{e}**")
-
+ 
     if start_chat != end_chat:
         return await message.reply("**❌ Both links must be from the same channel.**")
-
+ 
     if start_id > end_id:
         return await message.reply("**❌ Invalid range: start ID cannot exceed end ID.**")
-
+ 
     # 👉 Forward chat handling
     effective_forward_chat_id = None
     if raw_forward_id:
@@ -470,17 +469,17 @@ async def download_range_group(bot: Client, message: Message):
             )
         else:
             effective_forward_chat_id = raw_forward_id if PyroConf.FORWARD_ENABLED else None
-
+ 
     try:
         await user.get_chat(start_chat)
     except Exception:
         pass
-
+ 
     loading = await message.reply(
         f"📥 **__Fetching posts {start_id}–{end_id}…__**"
         + (" `[stream mode]`" if force_stream else "")
     )
-
+ 
     # COLLECT ALL MEDIA AND ANIMATIONS SEPARATELY
     valid_media = []       # compatible media for group sending
     animation_media = []   # animations to send separately
@@ -488,19 +487,19 @@ async def download_range_group(bot: Client, message: Message):
     thumb_paths = []
     skipped = failed = 0
     start_time = time()
-
+ 
     for msg_id in range(start_id, end_id + 1):
         try:
             chat_msg = await user.get_messages(chat_id=start_chat, message_ids=msg_id)
             if not chat_msg or not chat_msg.media:
                 skipped += 1
                 continue
-
+ 
             # SKIP IF PART OF MEDIA GROUP - THOSE SHOULD BE HANDLED SEPARATELY
             if chat_msg.media_group_id:
                 skipped += 1
                 continue
-
+ 
             try:
                 media_path = await chat_msg.download(
                     progress=Leaves.progress_for_pyrogram,
@@ -510,7 +509,7 @@ async def download_range_group(bot: Client, message: Message):
                 )
                 temp_paths.append(media_path)
                 caption = await get_parsed_msg(chat_msg.caption or "", chat_msg.caption_entities)
-
+ 
                 if chat_msg.photo:
                     valid_media.append(
                         InputMediaPhoto(media=media_path, caption=caption)
@@ -520,10 +519,10 @@ async def download_range_group(bot: Client, message: Message):
                     thumb = None
                     width = 480
                     height = 320
-
+ 
                     thumb_filename = f"bdlg_thumb_{int(time())}.jpg"
                     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-
+ 
                     if hasattr(chat_msg.video, 'thumbs') and chat_msg.video.thumbs:
                         try:
                             thumb = await user.download_media(
@@ -537,7 +536,7 @@ async def download_range_group(bot: Client, message: Message):
                         except Exception as e:
                             LOGGER(__name__).warning(f"Failed to download video thumbnail: {e}")
                             thumb = None
-
+ 
                     if thumb is None:
                         thumb = await get_video_thumbnail(media_path, duration)
                         if thumb and thumb != "none":
@@ -546,7 +545,7 @@ async def download_range_group(bot: Client, message: Message):
                             thumb_paths.append(thumb)
                         elif thumb == "none":
                             thumb = None
-
+ 
                     valid_media.append(
                         InputMediaVideo(
                             media=media_path,
@@ -559,22 +558,22 @@ async def download_range_group(bot: Client, message: Message):
                     )
                 elif chat_msg.document:
                     mime = getattr(chat_msg.document, "mime_type", "") or ""
-
+ 
                     # ── STREAM MODE: re-cast document as photo or video ──
                     if force_stream and mime.startswith("image/"):
                         valid_media.append(
                             InputMediaPhoto(media=media_path, caption=caption)
                         )
-
+ 
                     elif force_stream and mime.startswith("video/"):
                         duration = (await get_media_info(media_path))[0]
                         thumb = None
                         width = 480
                         height = 320
-
+ 
                         thumb_filename = f"bdlg_thumb_{int(time())}.jpg"
                         custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-
+ 
                         if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
                             try:
                                 thumb = await user.download_media(
@@ -590,7 +589,7 @@ async def download_range_group(bot: Client, message: Message):
                             except Exception as e:
                                 LOGGER(__name__).warning(f"Failed to download doc-video thumbnail: {e}")
                                 thumb = None
-
+ 
                         if thumb is None:
                             thumb = await get_video_thumbnail(media_path, duration)
                             if thumb and thumb != "none":
@@ -599,7 +598,7 @@ async def download_range_group(bot: Client, message: Message):
                                 thumb_paths.append(thumb)
                             elif thumb == "none":
                                 thumb = None
-
+ 
                         valid_media.append(
                             InputMediaVideo(
                                 media=media_path,
@@ -610,15 +609,15 @@ async def download_range_group(bot: Client, message: Message):
                                 height=height
                             )
                         )
-
+ 
                     else:
                         # ── DEFAULT: send as document ──
                         thumb = None
                         width, height = 320, 320
-
+ 
                         thumb_filename = f"bdlg_doc_thumb_{int(time())}.jpg"
                         custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-
+ 
                         if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
                             try:
                                 thumb = await user.download_media(
@@ -634,7 +633,7 @@ async def download_range_group(bot: Client, message: Message):
                             except Exception as e:
                                 LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
                                 thumb = None
-
+ 
                         valid_media.append(
                             InputMediaDocument(
                                 media=media_path,
@@ -642,7 +641,7 @@ async def download_range_group(bot: Client, message: Message):
                                 thumb=thumb
                             )
                         )
-
+ 
                 elif chat_msg.audio:
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
@@ -655,41 +654,41 @@ async def download_range_group(bot: Client, message: Message):
                 else:
                     skipped += 1
                     continue
-
+ 
             except Exception as e:
                 LOGGER(__name__).error(f"Error downloading msg {msg_id}: {e}")
                 failed += 1
                 continue
-
+ 
         except Exception as e:
             failed += 1
             LOGGER(__name__).error(f"Error fetching msg {msg_id}: {e}")
-
+ 
         await asyncio.sleep(1)
-
+ 
     if not valid_media and not animation_media:
         await loading.delete()
         await message.reply("❌ No valid media found in the given range.")
         for path in temp_paths + thumb_paths:
             cleanup_download(path)
         return
-
+ 
     # NOTIFY USER IF ANIMATIONS EXIST
     anim_notice = None
     if animation_media:
         anim_notice = await message.reply(
             f"ℹ️ **Found {len(animation_media)} GIF(s) in the range, they will be sent separately after the media group.**"
         )
-
+ 
     sent_messages = []
     group_sent_messages = []
     animation_sent_messages = []
-
+ 
     # SPLIT valid_media INTO CHUNKS OF 10 AND SEND EACH AS A GROUP
     if valid_media:
         chunks = [valid_media[i:i+10] for i in range(0, len(valid_media), 10)]
         LOGGER(__name__).info(f"Sending {len(valid_media)} media in {len(chunks)} group(s)")
-
+ 
         for idx, chunk in enumerate(chunks):
             try:
                 await loading.edit(f"📤 **__Sending group {idx+1}/{len(chunks)}…__**")
@@ -735,9 +734,9 @@ async def download_range_group(bot: Client, message: Message):
                         group_sent_messages.append(sent)
                     except Exception as individual_e:
                         await message.reply(f"Failed to upload media: {individual_e}")
-
+ 
             await asyncio.sleep(2)
-
+ 
     # SEND ANIMATIONS INDIVIDUALLY AFTER ALL GROUPS
     if animation_media:
         await loading.edit(f"📤 **__Sending {len(animation_media)} GIF(s)…__**")
@@ -754,7 +753,7 @@ async def download_range_group(bot: Client, message: Message):
             except Exception as e:
                 await message.reply(f"Failed to upload animation: {e}")
             await asyncio.sleep(1)
-
+ 
     # FORWARD TO ADDITIONAL CHAT IF REQUESTED
     if effective_forward_chat_id and sent_messages:
         source_chat_id = sent_messages[0].chat.id
@@ -781,7 +780,7 @@ async def download_range_group(bot: Client, message: Message):
                                 continue
                             raise
                     await asyncio.sleep(2)
-
+ 
             # FORWARD ANIMATIONS INDIVIDUALLY USING copy_message
             for anim_msg in animation_sent_messages:
                 for attempt in range(2):
@@ -801,15 +800,15 @@ async def download_range_group(bot: Client, message: Message):
                             continue
                         raise
                 await asyncio.sleep(1)
-
+ 
         except Exception as e:
             LOGGER(__name__).error(f"Failed to forward to {effective_forward_chat_id}: {e}")
-
+ 
     # CLEAN UP NOTICE AND LOADING MESSAGES
     if anim_notice:
         await anim_notice.delete()
     await loading.delete()
-
+ 
     # FINAL SUMMARY
     await message.reply(
         "**✅ Batch Group Process Complete!**\n"
@@ -820,15 +819,15 @@ async def download_range_group(bot: Client, message: Message):
         f"❌ **Failed**        : `{failed}` error(s)\n"
         + (f"📡 **Stream mode**   : `on`" if force_stream else "")
     )
-
+ 
     for path in temp_paths + thumb_paths:
         cleanup_download(path)
         
-
+ 
 @bot.on_message(filters.command("mdl") & filters.user(PyroConf.OWNER_ID))
 async def download_multi_group(bot: Client, message: Message):
     global forward_chat_id
-
+ 
     raw = message.text.split(None, 1)
     if len(raw) < 2:
         await message.reply(
@@ -841,29 +840,29 @@ async def download_multi_group(bot: Client, message: Message):
             "📡 Add `s` to force documents to be sent as streamable photo/video."
         )
         return
-
+ 
     parts = raw[1].split()
-
+ 
     # CHECK IF LAST PART IS "s" FLAG
     if parts and parts[-1].lower() == "s":
         force_stream = True
         parts = parts[:-1]
     else:
         force_stream = False
-
+ 
     # VALIDATE LINKS
     links = [p for p in parts if p.startswith("https://t.me/")]
     invalid = [p for p in parts if not p.startswith("https://t.me/")]
-
+ 
     if not links:
         return await message.reply("**❌ No valid t.me links found.**")
-
+ 
     if invalid:
         await message.reply(
             f"⚠️ **Skipping {len(invalid)} invalid entry(ies):**\n"
             + "\n".join(f"`{i}`" for i in invalid)
         )
-
+ 
     # FORWARD CHAT HANDLING
     effective_forward_chat_id = None
     if forward_chat_id:
@@ -875,12 +874,12 @@ async def download_multi_group(bot: Client, message: Message):
             )
         else:
             effective_forward_chat_id = forward_chat_id if PyroConf.FORWARD_ENABLED else None
-
+ 
     loading = await message.reply(
         f"📥 **__Fetching {len(links)} link(s)…__**"
         + (" `[stream mode]`" if force_stream else "")
     )
-
+ 
     # COLLECT ALL MEDIA AND ANIMATIONS SEPARATELY
     valid_media = []
     animation_media = []
@@ -888,27 +887,27 @@ async def download_multi_group(bot: Client, message: Message):
     thumb_paths = []
     skipped = failed = 0
     start_time = time()
-
+ 
     for idx, url in enumerate(links, 1):
         await loading.edit(f"📥 **__Downloading {idx}/{len(links)}…__**")
         try:
             # PARSE LINK
             if "?" in url:
                 url = url.split("?", 1)[0]
-
+ 
             chat_id, msg_id = getChatMsgID(url)
             chat_msg = await user.get_messages(chat_id=chat_id, message_ids=msg_id)
-
+ 
             if not chat_msg or not chat_msg.media:
                 skipped += 1
                 continue
-
+ 
             # SKIP MEDIA GROUPS - NOT SUPPORTED IN THIS CMD
             if chat_msg.media_group_id:
                 skipped += 1
                 await message.reply(f"⚠️ `{url}` is part of a media group, skipping.")
                 continue
-
+ 
             try:
                 media_path = await chat_msg.download(
                     progress=Leaves.progress_for_pyrogram,
@@ -918,7 +917,7 @@ async def download_multi_group(bot: Client, message: Message):
                 )
                 temp_paths.append(media_path)
                 caption = await get_parsed_msg(chat_msg.caption or "", chat_msg.caption_entities)
-
+ 
                 if chat_msg.photo:
                     valid_media.append(
                         InputMediaPhoto(media=media_path, caption=caption)
@@ -928,10 +927,10 @@ async def download_multi_group(bot: Client, message: Message):
                     thumb = None
                     width = 480
                     height = 320
-
+ 
                     thumb_filename = f"mdl_thumb_{int(time())}.jpg"
                     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-
+ 
                     if hasattr(chat_msg.video, 'thumbs') and chat_msg.video.thumbs:
                         try:
                             thumb = await user.download_media(
@@ -945,7 +944,7 @@ async def download_multi_group(bot: Client, message: Message):
                         except Exception as e:
                             LOGGER(__name__).warning(f"Failed to download video thumbnail: {e}")
                             thumb = None
-
+ 
                     if thumb is None:
                         thumb = await get_video_thumbnail(media_path, duration)
                         if thumb and thumb != "none":
@@ -954,7 +953,7 @@ async def download_multi_group(bot: Client, message: Message):
                             thumb_paths.append(thumb)
                         elif thumb == "none":
                             thumb = None
-
+ 
                     valid_media.append(
                         InputMediaVideo(
                             media=media_path,
@@ -967,22 +966,22 @@ async def download_multi_group(bot: Client, message: Message):
                     )
                 elif chat_msg.document:
                     mime = getattr(chat_msg.document, "mime_type", "") or ""
-
+ 
                     # ── STREAM MODE: re-cast document as photo or video ──
                     if force_stream and mime.startswith("image/"):
                         valid_media.append(
                             InputMediaPhoto(media=media_path, caption=caption)
                         )
-
+ 
                     elif force_stream and mime.startswith("video/"):
                         duration = (await get_media_info(media_path))[0]
                         thumb = None
                         width = 480
                         height = 320
-
+ 
                         thumb_filename = f"mdl_thumb_{int(time())}.jpg"
                         custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-
+ 
                         if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
                             try:
                                 thumb = await user.download_media(
@@ -998,7 +997,7 @@ async def download_multi_group(bot: Client, message: Message):
                             except Exception as e:
                                 LOGGER(__name__).warning(f"Failed to download doc-video thumbnail: {e}")
                                 thumb = None
-
+ 
                         if thumb is None:
                             thumb = await get_video_thumbnail(media_path, duration)
                             if thumb and thumb != "none":
@@ -1007,7 +1006,7 @@ async def download_multi_group(bot: Client, message: Message):
                                 thumb_paths.append(thumb)
                             elif thumb == "none":
                                 thumb = None
-
+ 
                         valid_media.append(
                             InputMediaVideo(
                                 media=media_path,
@@ -1018,15 +1017,15 @@ async def download_multi_group(bot: Client, message: Message):
                                 height=height
                             )
                         )
-
+ 
                     else:
                         # ── DEFAULT: send as document ──
                         thumb = None
                         width, height = 320, 320
-
+ 
                         thumb_filename = f"mdl_doc_thumb_{int(time())}.jpg"
                         custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
-
+ 
                         if hasattr(chat_msg.document, 'thumbs') and chat_msg.document.thumbs:
                             try:
                                 thumb = await user.download_media(
@@ -1042,7 +1041,7 @@ async def download_multi_group(bot: Client, message: Message):
                             except Exception as e:
                                 LOGGER(__name__).warning(f"Failed to download document thumbnail: {e}")
                                 thumb = None
-
+ 
                         valid_media.append(
                             InputMediaDocument(
                                 media=media_path,
@@ -1050,7 +1049,7 @@ async def download_multi_group(bot: Client, message: Message):
                                 thumb=thumb
                             )
                         )
-
+ 
                 elif chat_msg.audio:
                     valid_media.append(
                         InputMediaAudio(media=media_path, caption=caption)
@@ -1062,41 +1061,41 @@ async def download_multi_group(bot: Client, message: Message):
                 else:
                     skipped += 1
                     continue
-
+ 
             except Exception as e:
                 LOGGER(__name__).error(f"Error downloading {url}: {e}")
                 failed += 1
                 continue
-
+ 
         except Exception as e:
             failed += 1
             LOGGER(__name__).error(f"Error fetching {url}: {e}")
-
+ 
         await asyncio.sleep(1)
-
+ 
     if not valid_media and not animation_media:
         await loading.delete()
         await message.reply("❌ No valid media found in the given links.")
         for path in temp_paths + thumb_paths:
             cleanup_download(path)
         return
-
+ 
     # NOTIFY USER IF ANIMATIONS EXIST
     anim_notice = None
     if animation_media:
         anim_notice = await message.reply(
             f"ℹ️ **Found {len(animation_media)} GIF(s), they will be sent separately after the media group.**"
         )
-
+ 
     sent_messages = []
     group_sent_messages = []
     animation_sent_messages = []
-
+ 
     # SPLIT valid_media INTO CHUNKS OF 10 AND SEND EACH AS A GROUP
     if valid_media:
         chunks = [valid_media[i:i+10] for i in range(0, len(valid_media), 10)]
         LOGGER(__name__).info(f"Sending {len(valid_media)} media in {len(chunks)} group(s)")
-
+ 
         for idx, chunk in enumerate(chunks):
             try:
                 await loading.edit(f"📤 **__Sending group {idx+1}/{len(chunks)}…__**")
@@ -1142,9 +1141,9 @@ async def download_multi_group(bot: Client, message: Message):
                         group_sent_messages.append(sent)
                     except Exception as individual_e:
                         await message.reply(f"Failed to upload media: {individual_e}")
-
+ 
             await asyncio.sleep(2)
-
+ 
     # SEND ANIMATIONS INDIVIDUALLY AFTER ALL GROUPS
     if animation_media:
         await loading.edit(f"📤 **__Sending {len(animation_media)} GIF(s)…__**")
@@ -1161,7 +1160,7 @@ async def download_multi_group(bot: Client, message: Message):
             except Exception as e:
                 await message.reply(f"Failed to upload animation: {e}")
             await asyncio.sleep(1)
-
+ 
     # FORWARD TO ADDITIONAL CHAT IF REQUESTED
     if effective_forward_chat_id and sent_messages:
         source_chat_id = sent_messages[0].chat.id
@@ -1186,7 +1185,7 @@ async def download_multi_group(bot: Client, message: Message):
                                 continue
                             raise
                     await asyncio.sleep(2)
-
+ 
             for anim_msg in animation_sent_messages:
                 for attempt in range(2):
                     try:
@@ -1205,15 +1204,15 @@ async def download_multi_group(bot: Client, message: Message):
                             continue
                         raise
                 await asyncio.sleep(1)
-
+ 
         except Exception as e:
             LOGGER(__name__).error(f"Failed to forward to {effective_forward_chat_id}: {e}")
-
+ 
     # CLEAN UP
     if anim_notice:
         await anim_notice.delete()
     await loading.delete()
-
+ 
     # FINAL SUMMARY
     await message.reply(
         "**✅ Multi-link Group Process Complete!**\n"
@@ -1225,12 +1224,12 @@ async def download_multi_group(bot: Client, message: Message):
         f"❌ **Failed**          : `{failed}` error(s)\n"
         + (f"📡 **Stream mode**     : `on`" if force_stream else "")
     )
-
+ 
     for path in temp_paths + thumb_paths:
         cleanup_download(path)
-
-
-
+ 
+ 
+ 
 @bot.on_message(filters.command("sdl") & filters.user(PyroConf.OWNER_ID))
 async def download_range_all(bot: Client, message: Message):
     # SUPPORT BOTH SPACE AND NEWLINE SEPARATED LINKS
@@ -1246,37 +1245,37 @@ async def download_range_all(bot: Client, message: Message):
             "📡 Add `s` at the end to force streamable sending."
         )
         return
-
+ 
     # SPLIT ON WHITESPACE/NEWLINES, FILTER OUT EMPTY STRINGS
     parts = raw[1].split()
-
+ 
     # CHECK IF LAST PART IS "s" FLAG
     if parts and parts[-1].lower() == "s":
         force_stream = True
         parts = parts[:-1]
     else:
         force_stream = False
-
+ 
     # VALIDATE ALL REMAINING PARTS ARE t.me LINKS
     links = [p for p in parts if p.startswith("https://t.me/")]
     invalid = [p for p in parts if not p.startswith("https://t.me/")]
-
+ 
     if not links:
         return await message.reply("**❌ No valid t.me links found.**")
-
+ 
     if invalid:
         await message.reply(
             f"⚠️ **Skipping {len(invalid)} invalid entry(ies):**\n"
             + "\n".join(f"`{i}`" for i in invalid)
         )
-
+ 
     loading = await message.reply(
         f"📥 **__Processing {len(links)} link(s)…__**"
         + (" `[stream mode]`" if force_stream else "")
     )
-
+ 
     downloaded = skipped = failed = 0
-
+ 
     for idx, url in enumerate(links, 1):
         await loading.edit(f"📥 **__Downloading {idx}/{len(links)}…__**")
         try:
@@ -1292,9 +1291,9 @@ async def download_range_all(bot: Client, message: Message):
         except Exception as e:
             failed += 1
             LOGGER(__name__).error(f"Error at {url}: {e}")
-
+ 
         await asyncio.sleep(3)
-
+ 
     await loading.delete()
     await message.reply(
         "**✅ Batch Process Complete!**\n"
@@ -1304,30 +1303,30 @@ async def download_range_all(bot: Client, message: Message):
         f"❌ **Failed**     : `{failed}` error(s)\n"
         + (f"📡 **Stream mode** : `on`" if force_stream else "")
     )
-
-
+ 
+ 
 @bot.on_message(filters.command("dlrange") & filters.private & filters.user(PyroConf.OWNER_ID))
 async def download_range_old(bot: Client, message: Message):
     args = message.text.split()
-
+ 
     if len(args) != 3 or not all(arg.startswith("https://t.me/") for arg in args[1:]):
         await message.reply("❌ Usage:\n`/dlrange <start_link> <end_link>`\n\nExample:\n`/dlrange https://t.me/mychannel/100 https://t.me/mychannel/120`")
         return
-
+ 
     try:
         start_chat, start_id = getChatMsgID(args[1])
         end_chat, end_id = getChatMsgID(args[2])
     except Exception as e:
         return await message.reply(f"❌ Error parsing links:\n{e}")
-
+ 
     if start_chat != end_chat:
         return await message.reply("❌ Both links must be from the same channel.")
-
+ 
     if start_id > end_id:
         return await message.reply("❌ Start ID must be less than or equal to End ID.")
-
+ 
     await message.reply(f"📥 **Downloading posts from {start_id} to {end_id}...**")
-
+ 
     for msg_id in range(start_id, end_id + 1):
         try:
             url = f"https://t.me/{start_chat}/{msg_id}"
@@ -1335,32 +1334,32 @@ async def download_range_old(bot: Client, message: Message):
             await asyncio.sleep(2)
         except Exception as e:
             await message.reply(f"❌ Error at {url}: {e}")
-
-
+ 
+ 
 @bot.on_message(filters.private & ~filters.command(COMMANDS))
 async def handle_any_message(bot: Client, message: Message):
     if message.text and not message.text.startswith("/"):
         parts = message.text.strip().split()
-
+ 
         # CHECK IF LAST WORD IS "s" FLAG
         if parts and parts[-1].lower() == "s":
             force_stream = True
             parts = parts[:-1]
         else:
             force_stream = False
-
+ 
         # FILTER VALID LINKS
         links = [p for p in parts if p.startswith("https://t.me/")]
-
+ 
         if not links:
             return
-
+ 
         for url in links:
             await track_task(handle_download(bot, message, url, force_stream=force_stream))
             await asyncio.sleep(3)
-
-
-
+ 
+ 
+ 
 @bot.on_message(filters.command("stats"))
 async def stats(_, message: Message):
     currentTime = get_readable_time(time() - PyroConf.BOT_START_TIME)
@@ -1374,7 +1373,7 @@ async def stats(_, message: Message):
     memory = psutil.virtual_memory().percent
     disk = psutil.disk_usage("/").percent
     process = psutil.Process(os.getpid())
-
+ 
     stats = (
         "**≧◉◡◉≦ Bot is Up and Running successfully.**\n\n"
         f"**➜ Bot Uptime:** `{currentTime}`\n"
@@ -1389,16 +1388,16 @@ async def stats(_, message: Message):
         f"**➜ DISK:** `{disk}%`"
     )
     await message.reply(stats)
-
-
+ 
+ 
 @bot.on_message(filters.command("logs") & filters.private & filters.user(PyroConf.OWNER_ID))
 async def logs(_, message: Message):
     if os.path.exists("logs.txt"):
         await message.reply_document(document="logs.txt", caption="**Logs**")
     else:
         await message.reply("**Not exists**")
-
-
+ 
+ 
 @bot.on_message(filters.command("killall") & filters.user(PyroConf.OWNER_ID))
 async def cancel_all_tasks(_, message: Message):
     cancelled = 0
@@ -1413,17 +1412,17 @@ async def cancel_all_tasks(_, message: Message):
 async def eval_command(client, message):
     status_message = await message.reply_text("`Processing ...`")
     cmd = message.text.split(" ", maxsplit=1)[1]
-
+ 
     reply_to_ = message
     if message.reply_to_message:
         reply_to_ = message.reply_to_message
-
+ 
     old_stderr = sys.stderr
     old_stdout = sys.stdout
     redirected_output = sys.stdout = io.StringIO()
     redirected_error = sys.stderr = io.StringIO()
     stdout, stderr, exc, result = None, None, None, None
-
+ 
     try:
         # Run the user-provided code and capture the result of the last expression
         result = await aexec(cmd, client, message)
@@ -1451,17 +1450,17 @@ async def eval_command(client, message):
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
-
+ 
     final_output = "<b>EVAL</b>: "
     final_output += f"<code>{cmd}</code>\n\n"
     final_output += "<b>OUTPUT</b>:\n"
     final_output += f"{evaluation.strip()} \n"
-
+ 
     # Maintain a history of eval commands (max 25 entries)
     eval_history.append(cmd)
     if len(eval_history) > 25:
         eval_history.pop(0)
-
+ 
     if len(final_output) > MAX_MESSAGE_LENGTH:
         with io.BytesIO(str.encode(final_output)) as out_file:
             out_file.name = "eval.txt"
@@ -1475,8 +1474,8 @@ async def eval_command(client, message):
     else:
         await reply_to_.reply_text(final_output, quote=True)
     await status_message.delete()
-
-
+ 
+ 
 async def aexec(code, client, message):
     indent = "    "  # 4 spaces for consistent indentation
     
@@ -1516,14 +1515,14 @@ async def aexec(code, client, message):
     exec(full_code)
     result = await locals()["__aexec"](client, message)
     return result
-
-
+ 
+ 
 # Add a command to view history
 @bot.on_message(filters.command("ehis") & filters.user(PyroConf.OWNER_ID))
 async def show_eval_history(_, message):
     # Add numbering to each command and wrap in <code> tags
     formatted_history = "\n".join(f"<b>{i + 1}.</b> <code>{cmd}</code>" for i, cmd in enumerate(reversed(eval_history)))
-
+ 
     # Check if the message exceeds Telegram's character limit
     if len(formatted_history) > MAX_MESSAGE_LENGTH:
         # Send as a text file
@@ -1539,23 +1538,23 @@ async def show_eval_history(_, message):
         # Send as a regular message
         await message.reply_text(f"<b>EVAL HISTORY:</b>\n{formatted_history}", quote=True)
     
-
+ 
 @bot.on_message(filters.command("bash") & filters.user(PyroConf.OWNER_ID))
 async def execution(_, message):
     status_message = await message.reply_text("`Processing ...`")
     cmd = message.text.split(" ", maxsplit=1)[1]
-
+ 
     # Replace command with alias if it exists
     cmd = COMMAND_ALIASES.get(cmd, cmd)
-
+ 
     reply_to_ = message
     if message.reply_to_message:
         reply_to_ = message.reply_to_message
-
+ 
     try:
         # Log the command
         logging.info(f"Command executed by {message.from_user.id}: {cmd}")
-
+ 
         # Run the command with a timeout
         process = await asyncio.create_subprocess_shell(
             cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -1566,16 +1565,16 @@ async def execution(_, message):
             await process.kill()  # Kill the process if it times out
             await status_message.edit_text("❌ **Timeout**: The command took too long to execute.")
             return
-
+ 
         e = stderr.decode().strip() if stderr else "😂"
         o = stdout.decode().strip() if stdout else "😐"
-
+ 
         OUTPUT = ""
         OUTPUT += f"<b>QUERY:</b>\n<u>Command:</u>\n<code>{cmd}</code> \n"
         OUTPUT += f"<u>PID</u>: <code>{process.pid}</code>\n\n"
         OUTPUT += f"<b>stderr</b>: \n<code>{e}</code>\n\n"
         OUTPUT += f"<b>stdout</b>: \n<code>{o}</code>"
-
+ 
         if len(OUTPUT) > MAX_MESSAGE_LENGTH:
             with BytesIO(str.encode(OUTPUT)) as out_file:
                 out_file.name = "exec.txt"
@@ -1588,12 +1587,12 @@ async def execution(_, message):
                 os.remove("exec.txt")
         else:
             await reply_to_.reply_text(OUTPUT, quote=True)
-
+ 
         # Add command to history
         command_history.append(cmd)
         if len(command_history) > 25:  # Keep only the last 10 commands
             command_history.pop(0)
-
+ 
     except Exception as ex:
         await reply_to_.reply_text(f"❌ **Error**: {str(ex)}", quote=True)
     finally:
@@ -1604,7 +1603,7 @@ async def execution(_, message):
 async def show_history(_, message):
     # Add numbering to each command and wrap in <code> tags
     formatted_history = "\n".join(f"<b>{i + 1}.</b> <code>{cmd}</code>" for i, cmd in enumerate(reversed(command_history)))
-
+ 
     # Check if the message exceeds Telegram's character limit
     if len(formatted_history) > MAX_MESSAGE_LENGTH:
         # Send as a text file
@@ -1620,13 +1619,13 @@ async def show_history(_, message):
         # Send as a regular message
         await message.reply_text(f"<b>Command History:</b>\n{formatted_history}", quote=True)
         
-
+ 
 @bot.on_message(filters.command("template") & filters.private)
 async def set_template(client, message):
     if len(message.command) > 1 and message.command[1].lower() == "save":
         save_template_to_file(get_active_template())
         return await message.reply("💾 __Template saved to file (persistent).__")
-
+ 
     try:
         response = await message.ask(
             "**Please send your new progress template now.**\n\n"
@@ -1634,13 +1633,13 @@ async def set_template(client, message):
             "__You can type__ `/cancel` __to abort.__",
             timeout=60
         )
-
+ 
         if response.text.strip().lower() == "/cancel":
             return await message.reply("❌ Cancelled.")
-
+ 
         set_memory_template(response.text)
         await message.reply("✅ __Custom progress template updated (in-memory).__")
-
+ 
     except asyncio.TimeoutError:
         await message.reply("⌛ **Timeout:** `No response received.`")
     except Exception as e:
@@ -1652,17 +1651,17 @@ async def reset_template_command(client, message):
     reset_template()
     await message.reply("🔄 **Template reset to default (in-memory and file).**")
     
-
+ 
 @bot.on_message(filters.command("ping"))
 async def ping_command(client, message):
     start = time()
     reply = await message.reply("🏓 **Pong!**")
     end = time()
-
+ 
     ping_ms = round((end - start) * 1000, 2)
     uptime_sec = time() - START_TIME
     uptime_str = get_readable_time(uptime_sec)
-
+ 
     # Optional: create a color bar based on ping quality
     if ping_ms < 100:
         ping_color = "🟢"
@@ -1670,13 +1669,13 @@ async def ping_command(client, message):
         ping_color = "🟡"
     else:
         ping_color = "🔴"
-
+ 
     text = f"""
 🏓 **PONG!**
-
+ 
 {ping_color} **Ping:** `{ping_ms} ms`
 ⏱️ **Uptime:** `{uptime_str}`
-
+ 
 ⚙️ **Bot Status:** __Online & Stable__
 """
     await reply.edit(text)
@@ -1686,13 +1685,13 @@ async def ping_command(client, message):
 async def forward_toggle(client, message):
     if not PyroConf.FORWARD_CHAT_ID:
         return await message.reply("❌ `FORWARD_CHAT_ID` is not set in config.")
-
+ 
     args = message.command
     if len(args) < 2:
         return await message.reply("on, off, status")
-
+ 
     action = args[1].lower()
-
+ 
     if action == "on":
         PyroConf.FORWARD_ENABLED = True
         await message.reply(f"✅ File forwarding **enabled**.\nForwarding to: `{PyroConf.FORWARD_CHAT_ID}`")
@@ -1712,7 +1711,7 @@ async def forward_toggle(client, message):
     
 async def initialize():
     global forward_chat_id
-
+ 
     if PyroConf.FORWARD_CHAT_ID:
         forward_chat_id = await resolve_forward_chat_id(PyroConf.FORWARD_CHAT_ID)
         PyroConf.FORWARD_ENABLED = True  # sync with resolved state
@@ -1720,49 +1719,20 @@ async def initialize():
     else:
         PyroConf.FORWARD_ENABLED = False
         LOGGER(__name__).info("Auto-forward disabled. FORWARD_CHAT_ID not set.")
-
-async def main():
+ 
+ 
+if __name__ == "__main__":
+    # Create folders if they don't exist
     Path("assets").mkdir(parents=True, exist_ok=True)
     Path("default_thumbs").mkdir(parents=True, exist_ok=True)
-
-    loop = asyncio.get_running_loop()
-
-    # Make sure both Kurigram clients use the active loop
-    bot.loop = loop
-    user.loop = loop
-
-    LOGGER(__name__).info("Starting clients...")
-
-    await bot.start()
-    await user.start()
-
-    await initialize()
-
-    LOGGER(__name__).info(
-        "Bot and User session started successfully!"
-    )
-
     try:
-        await asyncio.Event().wait()
-
-    finally:
-        LOGGER(__name__).info("Stopping clients...")
-
-        if user.is_connected:
-            await user.stop()
-
-        if bot.is_connected:
-            await bot.stop()
-
-        LOGGER(__name__).info("Clients stopped.")
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-
-    except (KeyboardInterrupt, SystemExit):
-        LOGGER(__name__).info("Bot Stopped")
-
+        LOGGER(__name__).info("Bot Started!")
+        asyncio.get_event_loop().run_until_complete(initialize())
+        user.start()
+        bot.run()
+    except KeyboardInterrupt:
+        pass
     except Exception as err:
-        LOGGER(__name__).exception("Fatal error: %s", err)
+        LOGGER(__name__).error(err)
+    finally:
+        LOGGER(__name__).info("Bot Stopped")
