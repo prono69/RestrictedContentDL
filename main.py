@@ -1725,6 +1725,12 @@ async def main():
     Path("assets").mkdir(parents=True, exist_ok=True)
     Path("default_thumbs").mkdir(parents=True, exist_ok=True)
 
+    loop = asyncio.get_running_loop()
+
+    # Make sure both Kurigram clients use the active loop
+    bot.loop = loop
+    user.loop = loop
+
     LOGGER(__name__).info("Starting clients...")
 
     await bot.start()
@@ -1738,18 +1744,25 @@ async def main():
 
     try:
         await asyncio.Event().wait()
+
     finally:
+        LOGGER(__name__).info("Stopping clients...")
+
         if user.is_connected:
             await user.stop()
 
         if bot.is_connected:
             await bot.stop()
 
+        LOGGER(__name__).info("Clients stopped.")
+
 
 if __name__ == "__main__":
     try:
-        bot.run(main())
+        asyncio.run(main())
+
     except (KeyboardInterrupt, SystemExit):
         LOGGER(__name__).info("Bot Stopped")
+
     except Exception as err:
         LOGGER(__name__).exception("Fatal error: %s", err)
