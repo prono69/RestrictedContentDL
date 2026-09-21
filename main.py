@@ -1469,12 +1469,11 @@ async def eval_command(client, message):
             await reply_to_.reply_document(
                 document=out_file,
                 caption=cmd[: MAX_MESSAGE_LENGTH // 4 - 1],
-                disable_notification=True,
-                quote=True,
+                disable_notification=True
             )
             os.remove("eval.txt")
     else:
-        await reply_to_.reply_text(final_output, quote=True)
+        await reply_to_.reply_text(final_output)
     await status_message.delete()
  
  
@@ -1532,13 +1531,12 @@ async def show_eval_history(_, message):
             out_file.name = "eval_history.txt"
             await message.reply_document(
                 document=out_file,
-                caption="__Limit exceeded, so sending as file__",
-                quote=True,
+                caption="__Limit exceeded, so sending as file__"
             )
             os.remove("eval_history.txt")
     else:
         # Send as a regular message
-        await message.reply_text(f"<b>EVAL HISTORY:</b>\n{formatted_history}", quote=True)
+        await message.reply_text(f"<b>EVAL HISTORY:</b>\n{formatted_history}")
     
  
 @bot.on_message(filters.command("bash") & filters.user(PyroConf.OWNER_ID))
@@ -1583,12 +1581,11 @@ async def execution(_, message):
                 await reply_to_.reply_document(
                     document=out_file,
                     caption=cmd[: MAX_MESSAGE_LENGTH // 4 - 1],
-                    disable_notification=True,
-                    quote=True,
+                    disable_notification=True
                 )
                 os.remove("exec.txt")
         else:
-            await reply_to_.reply_text(OUTPUT, quote=True)
+            await reply_to_.reply_text(OUTPUT)
  
         # Add command to history
         command_history.append(cmd)
@@ -1596,7 +1593,7 @@ async def execution(_, message):
             command_history.pop(0)
  
     except Exception as ex:
-        await reply_to_.reply_text(f"❌ **Error**: {str(ex)}", quote=True)
+        await reply_to_.reply_text(f"❌ **Error**: {str(ex)}")
     finally:
         await status_message.delete()
         
@@ -1613,13 +1610,12 @@ async def show_history(_, message):
             out_file.name = "command_history.txt"
             await message.reply_document(
                 document=out_file,
-                caption="__Limit exceeded, so sending as file__",
-                quote=True,
+                caption="__Limit exceeded, so sending as file__"
             )
             os.remove("command_history.txt")
     else:
         # Send as a regular message
-        await message.reply_text(f"<b>Command History:</b>\n{formatted_history}", quote=True)
+        await message.reply_text(f"<b>Command History:</b>\n{formatted_history}")
         
  
 @bot.on_message(filters.command("template") & filters.private)
