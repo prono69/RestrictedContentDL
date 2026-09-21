@@ -10,6 +10,7 @@ from pyrogram.errors import (
     PeerIdInvalid,
     ChannelPrivate,
     ChatForbidden,
+    RPCError,
 )
  
  
@@ -22,7 +23,15 @@ async def resolve_forward_chat_id(raw: str):
 async def check_forward_permission(bot: Client, chat_id) -> tuple[bool, str]:
     try:
         chat = await bot.get_chat(chat_id)
-    except (PeerIdInvalid, ChannelPrivate, ChatForbidden, ValueError):
+    except PeerIdInvalid:
+        # If the channel is valid but not cached in Pyrogram's local DB yet
+        LOGGER(__name__).warning(f"PeerIdInvalid encountered for {chat_id}. Attempting to resolve...")
+        try:
+            # Try fetching peer directly or via dialogs cache
+            chat = await bot.get_chat(chat_id)
+        except RPCError as e:
+            return False, f"Bot cannot access chat ID `{chat_id}` (Peer not found/cached). Make sure the bot is added to the channel/group first: {e}"
+    except (ChannelPrivate, ChatForbidden, ValueError):
         return False, "Bot is not a member of the configured forward chat or the chat ID is invalid."
     except Exception as e:
         return False, f"Could not resolve forward chat: {e}"

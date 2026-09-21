@@ -15,7 +15,13 @@ from asyncio import create_subprocess_exec, create_subprocess_shell, wait_for
 from pyleaves import Leaves
 from pyrogram.parser import Parser
 from pyrogram.utils import get_channel_id
-from pyrogram.errors import FloodWait, BadRequest
+from pyrogram.errors import (
+    FloodWait,
+    BadRequest,
+    PeerIdInvalid,
+    ChannelPrivate,
+    ChatAdminRequired,
+)
 from pyrogram.types import (
     InputMediaPhoto,
     InputMediaVideo,
@@ -34,11 +40,9 @@ from helpers.msg import (
     get_parsed_msg
 )
 
-# VIDEO_THUMB_LOCATION = os.path.join(os.getcwd(), "assets", "video_thumb.jpg")
 CUSTOM_THUMB_DIR = os.path.join(os.getcwd(), "default_thumbs")
-os.makedirs(CUSTOM_THUMB_DIR, exist_ok=True)  # Create directory if it doesn't exist
+os.makedirs(CUSTOM_THUMB_DIR, exist_ok=True)
 
-# Default progress bar template
 PROGRESS_BAR = """🌊 {bar} `{percentage:.1f}%`
 
 **➜ Progress:** `{current}` **of** `{total}`
@@ -53,12 +57,10 @@ memory_template = PROGRESS_BAR
 
 
 def get_active_template():
-    """Get the current progress bar template (prefers in-memory)."""
     return memory_template or load_template_from_file()
 
 
 def load_template_from_file():
-    """Load saved template from file."""
     if os.path.exists(TEMPLATE_FILE):
         with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
             return f.read()
@@ -66,20 +68,17 @@ def load_template_from_file():
 
 
 def save_template_to_file(template: str):
-    """Save template to disk (persistent)."""
     with open(TEMPLATE_FILE, "w", encoding="utf-8") as f:
         f.write(template)
 
 
 def reset_template():
-    """Reset both in-memory and file to default."""
     global memory_template
     memory_template = PROGRESS_BAR
     save_template_to_file(PROGRESS_BAR)
 
 
 def set_memory_template(template: str):
-    """Set a new in-memory template."""
     global memory_template
     memory_template = template
     
@@ -135,7 +134,6 @@ async def get_media_info(path):
 
 async def get_video_thumbnail(video_file, duration):
     os.makedirs(os.path.join(os.getcwd(), "assets"), exist_ok=True)
-    # Generate a unique filename based on the video filename and timestamp
     base_name = os.path.splitext(os.path.basename(video_file))[0]
     thumb_location = os.path.join(os.getcwd(), "assets", f"{base_name}_thumb_{int(time())}.jpg")
     
@@ -162,7 +160,7 @@ async def get_video_thumbnail(video_file, duration):
         "1",
         "-threads",
         f"{os.cpu_count() // 2}",
-        thumb_location,  # Use the unique path
+        thumb_location,
     ]
     try:
         _, err, code = await wait_for(cmd_exec(cmd), timeout=60)
@@ -173,21 +171,19 @@ async def get_video_thumbnail(video_file, duration):
             return None
     except:
         logger.error(
-            f"Error while extracting thumbnail from video. Name: {video_file}. Error: Timeout some issues with ffmpeg with specific arch!"
+            f"Error while extracting thumbnail from video. Name: {video_file}. Timeout/issue with ffmpeg!"
         )
         return None
     return thumb_location
 
 
-# Generate progress bar args dynamically using template
 def progressArgs(action: str, progress_message, start_time):
     return (
         action,
         progress_message,
         start_time,
-        get_active_template()  # <- uses latest template
+        get_active_template()
     )
-
 
 
 async def send_media(
@@ -203,11 +199,10 @@ async def send_media(
     progress_args = progressArgs("📥 Uploading Progress", progress_message, start_time)
     LOGGER(__name__).info(f"Uploading media: {media_path} ({media_type})")
 
-    # Generate unique filename for the thumbnail
     thumb_filename = f"thumb_{int(time())}.jpg"
     custom_thumb_path = os.path.join(CUSTOM_THUMB_DIR, thumb_filename)
 
-    sent_message = None  # TRACK SENT MESSAGE
+    sent_message = None
 
     if media_type == "photo":
         sent_message = await message.reply_photo(
@@ -222,7 +217,6 @@ async def send_media(
         width = 480
         height = 320
 
-        # 1. FIRST TRY TO USE EXISTING TELEGRAM THUMBNAIL
         if hasattr(chat_message.video, 'thumbs') and chat_message.video.thumbs:
             try:
                 thumb = await user.download_media(
@@ -241,7 +235,6 @@ async def send_media(
                     os.remove(custom_thumb_path)
                 thumb = None
 
-        # 2. IF NO EXISTING THUMBNAIL, GENERATE ONE
         if thumb is None:
             thumb = await get_video_thumbnail(media_path, duration)
             if thumb is not None and thumb != "none":
@@ -280,7 +273,6 @@ async def send_media(
     elif media_type == "document":
         mime = getattr(chat_message.document, "mime_type", "") or ""
 
-        # ── STREAM MODE: re-cast document as photo or video ──
         if force_stream and mime.startswith("image/"):
             LOGGER(__name__).info(f"Stream mode: sending document as photo (mime: {mime})")
             sent_message = await message.reply_photo(
@@ -339,7 +331,6 @@ async def send_media(
                 os.remove(thumb)
 
         else:
-            # ── DEFAULT: send as document ──
             thumb = None
             width, height = 320, 320
 
@@ -396,16 +387,19 @@ async def send_media(
                 if wait_s > 0 and attempt == 0:
                     await asyncio.sleep(wait_s + 1)
                     continue
-                LOGGER(__name__).error(f"Failed to copy media after retry: FloodWait")
+                LOGGER(__name__).error("Failed to copy media after retry: FloodWait")
+            except (PeerIdInvalid, ChannelPrivate, ChatAdminRequired, BadRequest) as e:
+                LOGGER(__name__).error(f"Cannot copy media to {forward_chat_id}: Peer/Chat invalid or missing access: {e}")
+                break
             except Exception as e:
                 LOGGER(__name__).error(f"Failed to copy media to {forward_chat_id}: {e}")
                 break
-        
+
 
 async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=None, force_stream: bool = False):
     media_group_messages = await chat_message.get_media_group()
     valid_media = []
-    animation_media = []  # SEPARATE LIST FOR ANIMATIONS
+    animation_media = []
     temp_paths = []
     invalid_paths = []
     thumb_paths = []
@@ -476,7 +470,6 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                 elif msg.document:
                     mime = getattr(msg.document, "mime_type", "") or ""
 
-                    # ── STREAM MODE: re-cast document as photo or video ──
                     if force_stream and mime.startswith("image/"):
                         valid_media.append(
                             InputMediaPhoto(media=media_path, caption=caption)
@@ -529,7 +522,6 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                         )
 
                     else:
-                        # ── DEFAULT: send as document ──
                         thumb = None
                         width, height = 320, 320
 
@@ -566,7 +558,6 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                         InputMediaAudio(media=media_path, caption=caption)
                     )
                 elif msg.animation:
-                    # COLLECT ANIMATIONS SEPARATELY
                     animation_media.append(
                         InputMediaAnimation(media=media_path, caption=caption)
                     )
@@ -592,10 +583,9 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
         return False
 
     sent_messages = []
-    group_sent_messages = []      # ONLY non-animation messages
-    animation_sent_messages = []  # ONLY animation messages
+    group_sent_messages = []
+    animation_sent_messages = []
 
-    # SEND NON-ANIMATION MEDIA AS GROUP
     if valid_media:
         try:
             group_sent = await bot.send_media_group(chat_id=message.chat.id, media=valid_media)
@@ -652,7 +642,6 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
 
             await progress_message.delete()
 
-    # SEND ANIMATIONS INDIVIDUALLY AFTER THE GROUP
     for anim in animation_media:
         try:
             sent = await bot.send_animation(
@@ -670,7 +659,6 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
     if forward_chat_id and sent_messages:
         source_chat_id = sent_messages[0].chat.id
         try:
-            # FORWARD MEDIA GROUP USING copy_media_group
             if group_sent_messages:
                 for attempt in range(2):
                     try:
@@ -689,7 +677,6 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             continue
                         raise
 
-            # FORWARD ANIMATIONS INDIVIDUALLY USING copy_message
             for anim_msg in animation_sent_messages:
                 for attempt in range(2):
                     try:
@@ -708,6 +695,8 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
                             continue
                         raise
 
+        except (PeerIdInvalid, ChannelPrivate, ChatAdminRequired, BadRequest) as e:
+            LOGGER(__name__).error(f"Cannot copy media group to {forward_chat_id}: Peer/Chat invalid or missing access: {e}")
         except Exception as e:
             LOGGER(__name__).error(f"Failed to forward to {forward_chat_id}: {e}")
 
@@ -718,20 +707,8 @@ async def processMediaGroup(chat_message, bot, message, user, forward_chat_id=No
         cleanup_download(path)
     return True
 
-    
-    
+
 def json_parser(data: Any, indent: Union[int, None] = None, ensure_ascii: bool = False) -> Any:
-    """
-    Parses and formats JSON-like data.
-    
-    Args:
-        data: The input data to parse and format
-        indent: Number of spaces for indentation. None for compact output
-        ensure_ascii: If False, non-ASCII characters are allowed (default)
-    
-    Returns:
-        Parsed and formatted data
-    """
     if isinstance(data, (dict, list)):
         try:
             return json.dumps(data, indent=indent, ensure_ascii=ensure_ascii) if indent is not None else data
@@ -746,4 +723,3 @@ def json_parser(data: Any, indent: Union[int, None] = None, ensure_ascii: bool =
             return data
  
     return data
-    

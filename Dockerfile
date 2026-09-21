@@ -1,13 +1,30 @@
-FROM python:3.11-slim
+# --- STAGE 1: Builder ---
+FROM python:3.12-slim AS builder
 
-# Set timezone
+WORKDIR /build
+
+# Install build-essential only in the builder stage
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# Build wheels into a local wheel cache directory
+RUN pip install --no-cache-dir -U pip wheel==0.45.1 && \
+    pip install --no-cache-dir --user -r requirements.txt
+
+
+# --- STAGE 2: Runner ---
+FROM python:3.12-slim AS runner
+
 ENV TZ=Asia/Kolkata
 
-# Install system dependencies (including ffmpeg)
+# Install ONLY runtime dependencies (no compilers)
 RUN apt-get update && \
-    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        git build-essential tzdata ffmpeg wget && \
+        git tzdata ffmpeg wget && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
     apt-get clean && \
@@ -15,12 +32,11 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -U pip wheel==0.45.1 && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy built Python packages from the builder stage
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
 
 # Copy application files
 COPY . .
 
-CMD ["bash", "-c", "python3 main.py"]
+CMD ["python3", "main.py"]

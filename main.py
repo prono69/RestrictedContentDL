@@ -1720,19 +1720,35 @@ async def initialize():
         PyroConf.FORWARD_ENABLED = False
         LOGGER(__name__).info("Auto-forward disabled. FORWARD_CHAT_ID not set.")
 
-
-if __name__ == "__main__":
-    # Create folders if they don't exist
+async def main():
+    # Create directories
     Path("assets").mkdir(parents=True, exist_ok=True)
     Path("default_thumbs").mkdir(parents=True, exist_ok=True)
+    
+    LOGGER(__name__).info("Starting clients...")
+    
+    # Start both clients asynchronously
+    await bot.start()
+    await user.start()
+    
+    # Run initialization logic after clients are connected
+    await initialize()
+    
+    LOGGER(__name__).info("Bot and User session started successfully!")
+    
+    # Keep the event loop running until interrupted
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
     try:
-        LOGGER(__name__).info("Bot Started!")
-        asyncio.get_event_loop().run_until_complete(initialize())
-        user.start()
-        bot.run()
-    except KeyboardInterrupt:
-        pass
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        LOGGER(__name__).info("Bot Stopped")
     except Exception as err:
         LOGGER(__name__).error(err)
     finally:
-        LOGGER(__name__).info("Bot Stopped")
+        # Ensure clients stop cleanly when exiting
+        if bot.is_connected:
+            asyncio.run(bot.stop())
+        if user.is_connected:
+            asyncio.run(user.stop())

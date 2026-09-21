@@ -1,5 +1,5 @@
-pyrofork
-tgcrypto-pyrofork
+kurigram
+tgcrypto
 git+https://github.com/prono69/PyLeaves.git
 python-dotenv
 psutil
