@@ -28,8 +28,8 @@ from pyrogram.types import (
     InputMediaAnimation,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    LinkPreviewOptions
-    Message,
+    LinkPreviewOptions,
+    Message
 )
  
 from helpers.forward import check_forward_permission, resolve_forward_chat_id
