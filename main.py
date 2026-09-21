@@ -1722,23 +1722,23 @@ async def initialize():
         LOGGER(__name__).info("Auto-forward disabled. FORWARD_CHAT_ID not set.")
 
 async def main():
-    # Create directories
     Path("assets").mkdir(parents=True, exist_ok=True)
     Path("default_thumbs").mkdir(parents=True, exist_ok=True)
-    
+
     LOGGER(__name__).info("Starting clients...")
-    
-    # Start both clients asynchronously
     await bot.start()
     await user.start()
-    
-    # Run initialization logic after clients are connected
     await initialize()
-    
     LOGGER(__name__).info("Bot and User session started successfully!")
-    
-    # Keep the event loop running until interrupted
-    await asyncio.Event().wait()
+
+    try:
+        await asyncio.Event().wait()
+    finally:
+        # cleanup happens on the SAME loop, before asyncio.run() tears it down
+        if bot.is_connected:
+            await bot.stop()
+        if user.is_connected:
+            await user.stop()
 
 if __name__ == "__main__":
     try:
@@ -1747,9 +1747,5 @@ if __name__ == "__main__":
         LOGGER(__name__).info("Bot Stopped")
     except Exception as err:
         LOGGER(__name__).error(err)
-    finally:
-        # Ensure clients stop cleanly when exiting
-        if bot.is_connected:
-            asyncio.run(bot.stop())
-        if user.is_connected:
-            asyncio.run(user.stop())
+    # no asyncio.run() calls here anymore
+    
