@@ -73,11 +73,12 @@ bot = Client(
     api_id=PyroConf.API_ID,
     api_hash=PyroConf.API_HASH,
     bot_token=PyroConf.BOT_TOKEN,
-    workers=1000
+    workers=1000,
+    in_memory=True
 )
  
 # Client for user session
-user = Client("user_session", workers=1000, session_string=PyroConf.SESSION_STRING)
+user = Client("user_session", workers=1000, session_string=PyroConf.SESSION_STRING, in_memory=True)
  
 RUNNING_TASKS = set()
  
